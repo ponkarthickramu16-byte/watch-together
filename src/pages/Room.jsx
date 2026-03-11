@@ -14,6 +14,7 @@ import { Track } from "livekit-client";
 import "@livekit/components-styles";
 
 const REACTIONS = ["❤️", "😂", "😮", "🔥", "👏", "😢"];
+const TOKEN_SERVER = "https://livekit-token-server-t3ko.onrender.com";
 
 const getYouTubeId = (url) => {
     const match = url.match(
@@ -22,7 +23,7 @@ const getYouTubeId = (url) => {
     return match ? match[1] : null;
 };
 
-// ✅ Fixed VideoTile
+// ✅ VideoTile - sid-based comparison
 function VideoTile({ participant, local }) {
     const videoRef = useRef(null);
     const tracks = useTracks(
@@ -37,27 +38,19 @@ function VideoTile({ participant, local }) {
         }
         return () => {
             try {
-                const track = tracks[0]?.publication?.track;
-                if (track && videoRef.current) {
-                    track.detach(videoRef.current);
-                }
+                const t = tracks[0]?.publication?.track;
+                if (t && videoRef.current) t.detach(videoRef.current);
             } catch { }
         };
-    }, [tracks[0]?.publication?.track]);
+    }, [tracks[0]?.publication?.trackSid]);
 
     if (!tracks[0]?.publication?.track) {
         return (
             <div style={{
-                width: "180px",
-                height: "135px",
-                borderRadius: "12px",
-                backgroundColor: "#111",
-                border: `2px solid ${local ? "#ff6b35" : "#27ae60"}`,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flexDirection: "column",
-                gap: "8px",
+                width: "180px", height: "135px", borderRadius: "12px",
+                backgroundColor: "#111", border: `2px solid ${local ? "#ff6b35" : "#27ae60"}`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                flexDirection: "column", gap: "8px",
             }}>
                 <span style={{ fontSize: "32px" }}>👤</span>
                 <span style={{ color: "#666", fontSize: "12px" }}>
@@ -69,11 +62,8 @@ function VideoTile({ participant, local }) {
 
     return (
         <div style={{
-            position: "relative",
-            width: "180px",
-            height: "135px",
-            borderRadius: "12px",
-            overflow: "hidden",
+            position: "relative", width: "180px", height: "135px",
+            borderRadius: "12px", overflow: "hidden",
             border: `2px solid ${local ? "#ff6b35" : "#27ae60"}`,
             backgroundColor: "#000",
         }}>
@@ -83,21 +73,15 @@ function VideoTile({ participant, local }) {
                 muted={local}
                 playsInline
                 style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
+                    width: "100%", height: "100%", objectFit: "cover",
                     transform: local ? "scaleX(-1)" : "none",
                 }}
             />
             <div style={{
-                position: "absolute",
-                bottom: "4px",
-                left: "8px",
-                color: "white",
-                fontSize: "11px",
+                position: "absolute", bottom: "4px", left: "8px",
+                color: "white", fontSize: "11px",
                 backgroundColor: "rgba(0,0,0,0.6)",
-                padding: "2px 6px",
-                borderRadius: "4px",
+                padding: "2px 6px", borderRadius: "4px",
             }}>
                 {local ? "நீ 👤" : `${participant?.identity || "Partner"} 👤`}
             </div>
@@ -105,66 +89,48 @@ function VideoTile({ participant, local }) {
     );
 }
 
-// ✅ Fixed VideoCallUI - Local vs Remote properly separate
+// ✅ VideoCallUI - sid-based local/remote separation
 function VideoCallUI({ onEnd }) {
     const { localParticipant } = useLocalParticipant();
     const allTracks = useTracks(
         [{ source: Track.Source.Camera, withPlaceholder: false }],
     );
 
-    // ✅ Local vs Remote தனித்தனியா separate
     const remoteTracks = allTracks.filter(
-        (t) => t.participant.identity !== localParticipant?.identity
+        (t) => t.participant?.sid !== localParticipant?.sid
     );
 
     return (
         <div style={videoCallStyles.container}>
             <div style={videoCallStyles.header}>
                 <span style={{ color: "white", fontSize: "14px" }}>
-                    📹 Video Call {remoteTracks.length > 0 ? "✅ Connected!" : "⏳ Waiting..."}
+                    📹 {remoteTracks.length > 0 ? "✅ Connected!" : "⏳ Partner join பண்ண காத்திருக்கோம்..."}
                 </span>
-                <button onClick={onEnd} style={videoCallStyles.endBtn}>
-                    📵 End
-                </button>
+                <button onClick={onEnd} style={videoCallStyles.endBtn}>📵 End</button>
             </div>
             <div style={videoCallStyles.videoGrid}>
-
-                {/* ✅ உன் face மட்டும் - Left */}
+                {/* உன் face - Left */}
                 <div style={{ textAlign: "center" }}>
-                    <p style={{ color: "#ff6b35", fontSize: "11px", margin: "0 0 4px 0" }}>
-                        நீ 🟠
-                    </p>
+                    <p style={{ color: "#ff6b35", fontSize: "11px", margin: "0 0 4px 0" }}>நீ 🟠</p>
                     {localParticipant && (
                         <VideoTile participant={localParticipant} local={true} />
                     )}
                 </div>
-
-                {/* ✅ Partner face மட்டும் - Right */}
+                {/* Partner face - Right */}
                 <div style={{ textAlign: "center" }}>
-                    <p style={{ color: "#27ae60", fontSize: "11px", margin: "0 0 4px 0" }}>
-                        Partner 🟢
-                    </p>
+                    <p style={{ color: "#27ae60", fontSize: "11px", margin: "0 0 4px 0" }}>Partner 🟢</p>
                     {remoteTracks.length > 0 ? (
-                        <VideoTile
-                            participant={remoteTracks[0].participant}
-                            local={false}
-                        />
+                        <VideoTile participant={remoteTracks[0].participant} local={false} />
                     ) : (
                         <div style={{
-                            width: "180px",
-                            height: "135px",
-                            borderRadius: "12px",
-                            backgroundColor: "#111",
-                            border: "2px dashed #27ae60",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            flexDirection: "column",
-                            gap: "8px",
+                            width: "180px", height: "135px", borderRadius: "12px",
+                            backgroundColor: "#111", border: "2px dashed #27ae60",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            flexDirection: "column", gap: "8px",
                         }}>
                             <span style={{ fontSize: "32px" }}>👤</span>
-                            <span style={{ color: "#666", fontSize: "11px", textAlign: "center", padding: "0 8px" }}>
-                                Partner Video Call click பண்ண காத்திருக்கோம்
+                            <span style={{ color: "#555", fontSize: "11px", textAlign: "center", padding: "0 8px" }}>
+                                Partner Video Call click பண்ண வேணும்
                             </span>
                         </div>
                     )}
@@ -176,40 +142,23 @@ function VideoCallUI({ onEnd }) {
 
 const videoCallStyles = {
     container: {
-        position: "fixed",
-        bottom: "80px",
-        right: "20px",
-        width: "420px",
-        backgroundColor: "#1a1a1a",
-        borderRadius: "16px",
-        border: "2px solid #27ae60",
-        zIndex: 999,
-        overflow: "hidden",
+        position: "fixed", bottom: "80px", right: "20px", width: "420px",
+        backgroundColor: "#1a1a1a", borderRadius: "16px",
+        border: "2px solid #27ae60", zIndex: 999, overflow: "hidden",
         boxShadow: "0 8px 32px rgba(0,0,0,0.8)",
     },
     header: {
-        padding: "12px 16px",
-        backgroundColor: "#111",
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
+        padding: "12px 16px", backgroundColor: "#111",
+        display: "flex", justifyContent: "space-between", alignItems: "center",
         borderBottom: "1px solid #333",
     },
     endBtn: {
-        padding: "6px 14px",
-        backgroundColor: "#e74c3c",
-        color: "white",
-        border: "none",
-        borderRadius: "6px",
-        cursor: "pointer",
-        fontSize: "13px",
+        padding: "6px 14px", backgroundColor: "#e74c3c", color: "white",
+        border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "13px",
     },
     videoGrid: {
-        padding: "16px",
-        display: "flex",
-        gap: "12px",
-        justifyContent: "center",
-        alignItems: "flex-start",
+        padding: "16px", display: "flex", gap: "12px",
+        justifyContent: "center", alignItems: "flex-start",
     },
 };
 
@@ -228,7 +177,16 @@ function Room() {
     const [floatingReactions, setFloatingReactions] = useState([]);
     const [livekitToken, setLivekitToken] = useState(null);
     const [showVideoCall, setShowVideoCall] = useState(false);
+    // ✅ Call system states
+    const [incomingCall, setIncomingCall] = useState(false);
+    const [callStatus, setCallStatus] = useState(null); // null | "calling" | "in-call"
+    const [callerName, setCallerName] = useState("");
     const chatEndRef = useRef(null);
+    const usernameRef = useRef("");
+
+    useEffect(() => {
+        usernameRef.current = username;
+    }, [username]);
 
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -248,6 +206,28 @@ function Room() {
         });
         return () => unsubscribe();
     }, [roomId, isSyncing]);
+
+    // ✅ Call Status Listener
+    useEffect(() => {
+        if (!roomDocId || !nameSet) return;
+        const unsubscribe = onSnapshot(doc(db, "rooms", roomDocId), (snap) => {
+            const data = snap.data();
+            if (!data) return;
+            const currentUser = usernameRef.current;
+
+            if (data.callStatus === "calling" && data.callBy !== currentUser) {
+                setCallerName(data.callBy || "Partner");
+                setIncomingCall(true);
+            }
+            if (data.callStatus === "ended" && data.callBy !== currentUser) {
+                setIncomingCall(false);
+                setCallStatus(null);
+                setShowVideoCall(false);
+                setLivekitToken(null);
+            }
+        });
+        return () => unsubscribe();
+    }, [roomDocId, nameSet]);
 
     // Chat Listen
     useEffect(() => {
@@ -298,24 +278,74 @@ function Room() {
     const handlePlay = async () => { setIsPlaying(true); await updatePlayState(true); };
     const handlePause = async () => { setIsPlaying(false); await updatePlayState(false); };
 
+    // ✅ Token fetch helper
+    const fetchToken = async () => {
+        const response = await fetch(
+            `${TOKEN_SERVER}/api/token?roomName=room-${roomId}&participantName=${username}`
+        );
+        const data = await response.json();
+        return data.token;
+    };
+
+    // ✅ Start Call - Firestore-ல notify பண்ணு
     const startVideoCall = async () => {
         try {
-            // Direct URL - ENV variable issue bypass
-            const tokenServerUrl = "https://livekit-token-server-t3ko.onrender.com";
-            const response = await fetch(
-                `${tokenServerUrl}/api/token?roomName=room-${roomId}&participantName=${username}`
-            );
-            const data = await response.json();
-            setLivekitToken(data.token);
+            setCallStatus("calling");
+            if (roomDocId) {
+                await updateDoc(doc(db, "rooms", roomDocId), {
+                    callStatus: "calling",
+                    callBy: username,
+                });
+            }
+            const token = await fetchToken();
+            setLivekitToken(token);
             setShowVideoCall(true);
+            setCallStatus("in-call");
         } catch (err) {
+            setCallStatus(null);
             alert("Video call start ஆகல: " + err.message);
         }
     };
 
-    const endVideoCall = () => {
+    // ✅ Accept Call
+    const acceptCall = async () => {
+        setIncomingCall(false);
+        setCallStatus("in-call");
+        try {
+            if (roomDocId) {
+                await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "in-call" });
+            }
+            const token = await fetchToken();
+            setLivekitToken(token);
+            setShowVideoCall(true);
+        } catch (err) {
+            setCallStatus(null);
+            alert("Call accept ஆகல: " + err.message);
+        }
+    };
+
+    // ✅ Reject Call
+    const rejectCall = async () => {
+        setIncomingCall(false);
+        if (roomDocId) {
+            await updateDoc(doc(db, "rooms", roomDocId), {
+                callStatus: "ended",
+                callBy: username,
+            });
+        }
+    };
+
+    // ✅ End Call
+    const endVideoCall = async () => {
         setShowVideoCall(false);
         setLivekitToken(null);
+        setCallStatus(null);
+        if (roomDocId) {
+            await updateDoc(doc(db, "rooms", roomDocId), {
+                callStatus: "ended",
+                callBy: username,
+            });
+        }
     };
 
     const sendReaction = async (emoji) => {
@@ -437,20 +467,18 @@ function Room() {
                         <div style={styles.buttonGroup}>
                             <button
                                 onClick={showVideoCall ? endVideoCall : startVideoCall}
+                                disabled={callStatus === "calling"}
                                 style={{
                                     ...styles.controlBtn,
-                                    backgroundColor: showVideoCall ? "#e74c3c" : "#27ae60",
+                                    backgroundColor: showVideoCall ? "#e74c3c" : callStatus === "calling" ? "#666" : "#27ae60",
                                 }}
                             >
-                                {showVideoCall ? "📵 Call End" : "📹 Video Call"}
+                                {showVideoCall ? "📵 Call End" : callStatus === "calling" ? "⏳ Calling..." : "📹 Video Call"}
                             </button>
                             <button onClick={copyLink} style={styles.controlBtn}>
                                 {copied ? "✅ Copied!" : "🔗 Copy Link"}
                             </button>
-                            <button
-                                onClick={shareWhatsApp}
-                                style={{ ...styles.controlBtn, backgroundColor: "#25D366" }}
-                            >
+                            <button onClick={shareWhatsApp} style={{ ...styles.controlBtn, backgroundColor: "#25D366" }}>
                                 💬 WhatsApp
                             </button>
                             <button
@@ -505,6 +533,29 @@ function Room() {
                 )}
             </div>
 
+            {/* ✅ Incoming Call Popup */}
+            {incomingCall && (
+                <div style={styles.incomingCallOverlay}>
+                    <div style={styles.incomingCallCard}>
+                        <div style={{ fontSize: "56px", marginBottom: "8px" }}>📹</div>
+                        <p style={{ color: "white", fontSize: "20px", fontWeight: "bold", margin: "0 0 8px 0" }}>
+                            Incoming Video Call!
+                        </p>
+                        <p style={{ color: "#aaa", fontSize: "14px", margin: "0 0 28px 0" }}>
+                            {callerName} call பண்றாங்க...
+                        </p>
+                        <div style={{ display: "flex", gap: "16px", justifyContent: "center" }}>
+                            <button onClick={acceptCall} style={styles.acceptBtn}>
+                                ✅ Accept
+                            </button>
+                            <button onClick={rejectCall} style={styles.rejectBtn}>
+                                ❌ Reject
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* ✅ LiveKit Video Call */}
             {showVideoCall && livekitToken && (
                 <LiveKitRoom
@@ -523,6 +574,10 @@ function Room() {
                 @keyframes floatUp {
                     0% { transform: translateY(0) scale(1); opacity: 1; }
                     100% { transform: translateY(-300px) scale(1.5); opacity: 0; }
+                }
+                @keyframes pulse {
+                    0%, 100% { transform: translate(-50%, -50%) scale(1); }
+                    50% { transform: translate(-50%, -50%) scale(1.02); }
                 }
             `}</style>
         </div>
@@ -562,6 +617,28 @@ const styles = {
     chatInput: { padding: "12px", borderTop: "1px solid #333", display: "flex", gap: "8px" },
     msgInput: { flex: 1, padding: "10px 12px", backgroundColor: "#2a2a2a", border: "1px solid #333", borderRadius: "8px", color: "white", fontSize: "14px" },
     sendBtn: { padding: "10px 16px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "16px" },
+    // ✅ Incoming call styles
+    incomingCallOverlay: {
+        position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+        backgroundColor: "rgba(0,0,0,0.75)", zIndex: 1000,
+        display: "flex", alignItems: "center", justifyContent: "center",
+    },
+    incomingCallCard: {
+        backgroundColor: "#1a1a1a", borderRadius: "20px",
+        border: "2px solid #27ae60", padding: "40px",
+        textAlign: "center", animation: "pulse 1.5s infinite",
+        boxShadow: "0 8px 40px rgba(39,174,96,0.3)",
+    },
+    acceptBtn: {
+        padding: "14px 32px", backgroundColor: "#27ae60",
+        color: "white", border: "none", borderRadius: "12px",
+        fontSize: "16px", cursor: "pointer", fontWeight: "bold",
+    },
+    rejectBtn: {
+        padding: "14px 32px", backgroundColor: "#e74c3c",
+        color: "white", border: "none", borderRadius: "12px",
+        fontSize: "16px", cursor: "pointer", fontWeight: "bold",
+    },
 };
 
 export default Room;
