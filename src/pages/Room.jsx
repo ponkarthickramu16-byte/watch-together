@@ -7,11 +7,10 @@ import {
 } from "firebase/firestore";
 import {
     LiveKitRoom,
-    useTracks,
     useLocalParticipant,
     useRemoteParticipants,
+    RoomAudioRenderer,
 } from "@livekit/components-react";
-import { Track } from "livekit-client";
 import "@livekit/components-styles";
 
 const REACTIONS = ["❤️", "😂", "😮", "🔥", "👏", "😢"];
@@ -24,25 +23,37 @@ const getYouTubeId = (url) => {
     return match ? match[1] : null;
 };
 
-// ✅ Local Video
+// ✅ Local Video - localParticipant camera direct attach
 function LocalVideo() {
     const videoRef = useRef(null);
     const { localParticipant } = useLocalParticipant();
-    const tracks = useTracks(
-        [{ source: Track.Source.Camera, withPlaceholder: false }],
-        { participant: localParticipant }
-    );
 
     useEffect(() => {
-        const track = tracks[0]?.publication?.track;
-        if (track && videoRef.current) track.attach(videoRef.current);
+        if (!localParticipant) return;
+
+        const attachVideo = () => {
+            const publication = localParticipant.getTrackPublication("camera");
+            const track = publication?.track;
+            if (track && videoRef.current) {
+                track.attach(videoRef.current);
+            }
+        };
+
+        attachVideo();
+        localParticipant.on("trackPublished", attachVideo);
+        localParticipant.on("trackSubscribed", attachVideo);
+
         return () => {
+            localParticipant.off("trackPublished", attachVideo);
+            localParticipant.off("trackSubscribed", attachVideo);
             try {
-                const t = tracks[0]?.publication?.track;
-                if (t && videoRef.current) t.detach(videoRef.current);
+                const publication = localParticipant.getTrackPublication("camera");
+                if (publication?.track && videoRef.current) {
+                    publication.track.detach(videoRef.current);
+                }
             } catch { }
         };
-    }, [tracks[0]?.publication?.trackSid]);
+    }, [localParticipant?.sid]);
 
     return (
         <div style={{ textAlign: "center" }}>
@@ -52,62 +63,54 @@ function LocalVideo() {
                 borderRadius: "10px", overflow: "hidden",
                 border: "2px solid #ff6b35", backgroundColor: "#111",
             }}>
-                {tracks[0]?.publication?.track ? (
-                    <video ref={videoRef} autoPlay muted playsInline
-                        style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }} />
-                ) : (
-                    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "4px" }}>
-                        <span style={{ fontSize: "28px" }}>👤</span>
-                        <span style={{ color: "#666", fontSize: "10px" }}>Loading...</span>
-                    </div>
-                )}
+                <video ref={videoRef} autoPlay muted playsInline
+                    style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }} />
+                <div style={{ position: "absolute", bottom: "4px", left: "6px", color: "white", fontSize: "10px", backgroundColor: "rgba(0,0,0,0.6)", padding: "2px 5px", borderRadius: "4px" }}>
+                    நீ 👤
+                </div>
             </div>
         </div>
     );
 }
 
-// ✅ Remote Video - Audio auto attach
+// ✅ Remote Video - remoteParticipant camera + mic direct attach
 function RemoteVideo() {
     const videoRef = useRef(null);
     const audioRef = useRef(null);
     const remoteParticipants = useRemoteParticipants();
     const remoteParticipant = remoteParticipants[0];
 
-    const videoTracks = useTracks(
-        [{ source: Track.Source.Camera, withPlaceholder: false }],
-        { participant: remoteParticipant }
-    );
-
-    const audioTracks = useTracks(
-        [{ source: Track.Source.Microphone, withPlaceholder: false }],
-        { participant: remoteParticipant }
-    );
-
-    // Video attach
     useEffect(() => {
         if (!remoteParticipant) return;
-        const track = videoTracks[0]?.publication?.track;
-        if (track && videoRef.current) track.attach(videoRef.current);
-        return () => {
-            try {
-                const t = videoTracks[0]?.publication?.track;
-                if (t && videoRef.current) t.detach(videoRef.current);
-            } catch { }
-        };
-    }, [videoTracks[0]?.publication?.trackSid, remoteParticipant?.sid]);
 
-    // ✅ Audio attach - partner voice கேக்க
-    useEffect(() => {
-        if (!remoteParticipant) return;
-        const track = audioTracks[0]?.publication?.track;
-        if (track && audioRef.current) track.attach(audioRef.current);
+        const attachTracks = () => {
+            // Video
+            const videoPub = remoteParticipant.getTrackPublication("camera");
+            if (videoPub?.track && videoRef.current) {
+                videoPub.track.attach(videoRef.current);
+            }
+            // Audio
+            const audioPub = remoteParticipant.getTrackPublication("microphone");
+            if (audioPub?.track && audioRef.current) {
+                audioPub.track.attach(audioRef.current);
+            }
+        };
+
+        attachTracks();
+        remoteParticipant.on("trackSubscribed", attachTracks);
+        remoteParticipant.on("trackPublished", attachTracks);
+
         return () => {
+            remoteParticipant.off("trackSubscribed", attachTracks);
+            remoteParticipant.off("trackPublished", attachTracks);
             try {
-                const t = audioTracks[0]?.publication?.track;
-                if (t && audioRef.current) t.detach(audioRef.current);
+                const videoPub = remoteParticipant.getTrackPublication("camera");
+                if (videoPub?.track && videoRef.current) videoPub.track.detach(videoRef.current);
+                const audioPub = remoteParticipant.getTrackPublication("microphone");
+                if (audioPub?.track && audioRef.current) audioPub.track.detach(audioRef.current);
             } catch { }
         };
-    }, [audioTracks[0]?.publication?.trackSid, remoteParticipant?.sid]);
+    }, [remoteParticipant?.sid]);
 
     return (
         <div style={{ textAlign: "center" }}>
@@ -117,14 +120,14 @@ function RemoteVideo() {
                 borderRadius: "10px", overflow: "hidden",
                 border: "2px solid #27ae60", backgroundColor: "#111",
             }}>
-                {remoteParticipant && videoTracks[0]?.publication?.track ? (
+                {remoteParticipant ? (
                     <video ref={videoRef} autoPlay playsInline
                         style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 ) : (
                     <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "8px" }}>
                         <span style={{ fontSize: "28px" }}>👤</span>
                         <span style={{ color: "#555", fontSize: "10px", textAlign: "center", padding: "0 8px" }}>
-                            {remoteParticipant ? "Loading..." : "Partner join பண்ண காத்திருக்கோம்"}
+                            Partner join பண்ண காத்திருக்கோம்
                         </span>
                     </div>
                 )}
@@ -134,8 +137,8 @@ function RemoteVideo() {
                     </div>
                 )}
             </div>
-            {/* ✅ Hidden audio element - partner voice */}
-            <audio ref={audioRef} autoPlay />
+            {/* ✅ Hidden audio - partner voice கேக்க */}
+            <audio ref={audioRef} autoPlay style={{ display: "none" }} />
         </div>
     );
 }
@@ -145,7 +148,7 @@ function VideoCallUI({ onEnd }) {
     const { localParticipant } = useLocalParticipant();
     const [isMuted, setIsMuted] = useState(false);
     const [isCamOff, setIsCamOff] = useState(false);
-    const [pos, setPos] = useState({ x: window.innerWidth - 450, y: window.innerHeight - 380 });
+    const [pos, setPos] = useState({ x: window.innerWidth - 430, y: window.innerHeight - 400 });
     const dragging = useRef(false);
     const offset = useRef({ x: 0, y: 0 });
 
@@ -153,26 +156,17 @@ function VideoCallUI({ onEnd }) {
         dragging.current = true;
         offset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
     };
-
-    const onMouseMove = (e) => {
-        if (!dragging.current) return;
-        setPos({ x: e.clientX - offset.current.x, y: e.clientY - offset.current.y });
-    };
-
-    const onMouseUp = () => { dragging.current = false; };
-
-    // Touch support
-    const onTouchStart = (e) => {
-        dragging.current = true;
-        offset.current = { x: e.touches[0].clientX - pos.x, y: e.touches[0].clientY - pos.y };
-    };
-    const onTouchMove = (e) => {
-        if (!dragging.current) return;
-        setPos({ x: e.touches[0].clientX - offset.current.x, y: e.touches[0].clientY - offset.current.y });
-    };
-    const onTouchEnd = () => { dragging.current = false; };
-
     useEffect(() => {
+        const onMouseMove = (e) => {
+            if (!dragging.current) return;
+            setPos({ x: e.clientX - offset.current.x, y: e.clientY - offset.current.y });
+        };
+        const onMouseUp = () => { dragging.current = false; };
+        const onTouchMove = (e) => {
+            if (!dragging.current) return;
+            setPos({ x: e.touches[0].clientX - offset.current.x, y: e.touches[0].clientY - offset.current.y });
+        };
+        const onTouchEnd = () => { dragging.current = false; };
         window.addEventListener("mousemove", onMouseMove);
         window.addEventListener("mouseup", onMouseUp);
         window.addEventListener("touchmove", onTouchMove);
@@ -191,7 +185,6 @@ function VideoCallUI({ onEnd }) {
             setIsMuted(!isMuted);
         }
     };
-
     const toggleCam = async () => {
         if (localParticipant) {
             await localParticipant.setCameraEnabled(isCamOff);
@@ -200,36 +193,22 @@ function VideoCallUI({ onEnd }) {
     };
 
     return (
-        <div
-            style={{
-                position: "fixed",
-                left: pos.x,
-                top: pos.y,
-                width: "400px",
-                backgroundColor: "#1a1a1a",
-                borderRadius: "16px",
-                border: "2px solid #27ae60",
-                zIndex: 9999,
-                overflow: "hidden",
-                boxShadow: "0 8px 32px rgba(0,0,0,0.9)",
-                userSelect: "none",
-            }}
-        >
-            {/* ✅ Drag Handle */}
-            <div
-                onMouseDown={onMouseDown}
-                onTouchStart={onTouchStart}
-                style={{
-                    padding: "10px 16px", backgroundColor: "#111",
-                    display: "flex", justifyContent: "space-between", alignItems: "center",
-                    borderBottom: "1px solid #333", cursor: "grab",
+        <div style={{
+            position: "fixed", left: pos.x, top: pos.y, width: "390px",
+            backgroundColor: "#1a1a1a", borderRadius: "16px",
+            border: "2px solid #27ae60", zIndex: 9999, overflow: "hidden",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.9)", userSelect: "none",
+        }}>
+            {/* Drag Handle */}
+            <div onMouseDown={onMouseDown}
+                onTouchStart={(e) => {
+                    dragging.current = true;
+                    offset.current = { x: e.touches[0].clientX - pos.x, y: e.touches[0].clientY - pos.y };
                 }}
-            >
-                <span style={{ color: "#666", fontSize: "12px" }}>⠿ Drag பண்ணலாம்</span>
-                <span style={{ color: "white", fontSize: "13px" }}>📹 Video Call</span>
-                <button onClick={onEnd} style={{ padding: "4px 10px", backgroundColor: "#e74c3c", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", fontSize: "12px" }}>
-                    📵 End
-                </button>
+                style={{ padding: "10px 16px", backgroundColor: "#111", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #333", cursor: "grab" }}>
+                <span style={{ color: "#555", fontSize: "12px" }}>⠿ Drag</span>
+                <span style={{ color: "white", fontSize: "13px", fontWeight: "bold" }}>📹 Video Call</span>
+                <button onClick={onEnd} style={{ padding: "4px 10px", backgroundColor: "#e74c3c", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", fontSize: "12px" }}>📵</button>
             </div>
 
             {/* Videos */}
@@ -238,18 +217,15 @@ function VideoCallUI({ onEnd }) {
                 <RemoteVideo />
             </div>
 
-            {/* ✅ Controls - Mute / Cam / End */}
+            {/* Controls */}
             <div style={{ padding: "10px 12px", borderTop: "1px solid #333", display: "flex", gap: "8px", justifyContent: "center" }}>
-                <button onClick={toggleMic}
-                    style={{ padding: "8px 14px", color: "white", border: "1px solid #444", borderRadius: "8px", cursor: "pointer", fontSize: "12px", fontWeight: "bold", backgroundColor: isMuted ? "#e74c3c" : "#2a2a2a" }}>
+                <button onClick={toggleMic} style={{ padding: "8px 14px", color: "white", border: "1px solid #444", borderRadius: "8px", cursor: "pointer", fontSize: "12px", fontWeight: "bold", backgroundColor: isMuted ? "#e74c3c" : "#2a2a2a" }}>
                     {isMuted ? "🔇 Muted" : "🎤 Mic On"}
                 </button>
-                <button onClick={toggleCam}
-                    style={{ padding: "8px 14px", color: "white", border: "1px solid #444", borderRadius: "8px", cursor: "pointer", fontSize: "12px", fontWeight: "bold", backgroundColor: isCamOff ? "#e74c3c" : "#2a2a2a" }}>
+                <button onClick={toggleCam} style={{ padding: "8px 14px", color: "white", border: "1px solid #444", borderRadius: "8px", cursor: "pointer", fontSize: "12px", fontWeight: "bold", backgroundColor: isCamOff ? "#e74c3c" : "#2a2a2a" }}>
                     {isCamOff ? "📷 Cam Off" : "📸 Cam On"}
                 </button>
-                <button onClick={onEnd}
-                    style={{ padding: "8px 14px", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "12px", fontWeight: "bold", backgroundColor: "#e74c3c" }}>
+                <button onClick={onEnd} style={{ padding: "8px 14px", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "12px", fontWeight: "bold", backgroundColor: "#e74c3c" }}>
                     📵 End
                 </button>
             </div>
@@ -275,11 +251,29 @@ function Room() {
     const [incomingCall, setIncomingCall] = useState(false);
     const [callStatus, setCallStatus] = useState(null);
     const [callerName, setCallerName] = useState("");
+    // ✅ YouTube iframe mute when call active
+    const iframeRef = useRef(null);
     const chatEndRef = useRef(null);
     const usernameRef = useRef("");
 
     useEffect(() => { usernameRef.current = username; }, [username]);
     useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+    // ✅ Mute YouTube when video call is on
+    useEffect(() => {
+        if (!iframeRef.current) return;
+        try {
+            if (showVideoCall) {
+                iframeRef.current.contentWindow.postMessage(
+                    JSON.stringify({ event: "command", func: "mute", args: [] }), "*"
+                );
+            } else {
+                iframeRef.current.contentWindow.postMessage(
+                    JSON.stringify({ event: "command", func: "unMute", args: [] }), "*"
+                );
+            }
+        } catch { }
+    }, [showVideoCall]);
 
     // Room Sync
     useEffect(() => {
@@ -445,6 +439,7 @@ function Room() {
                         {youtubeId ? (
                             <div style={{ width: "100%", height: "100%", position: "relative" }}>
                                 <iframe
+                                    ref={iframeRef}
                                     src={`https://www.youtube.com/embed/${youtubeId}?autoplay=${isPlaying ? 1 : 0}&controls=1&enablejsapi=1&origin=${window.location.origin}&rel=0`}
                                     style={{ width: "100%", height: "100%", border: "none" }}
                                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
@@ -537,7 +532,7 @@ function Room() {
                 </div>
             )}
 
-            {/* ✅ LiveKit Video Call - always on top, draggable */}
+            {/* ✅ LiveKit - RoomAudioRenderer automatic audio handle பண்ணும் */}
             {showVideoCall && livekitToken && (
                 <LiveKitRoom
                     token={livekitToken}
@@ -546,8 +541,9 @@ function Room() {
                     video={true}
                     audio={true}
                     onDisconnected={endVideoCall}
-                    style={{ position: "fixed", zIndex: 9999 }}
                 >
+                    {/* ✅ This automatically handles ALL remote audio */}
+                    <RoomAudioRenderer />
                     <VideoCallUI onEnd={endVideoCall} />
                 </LiveKitRoom>
             )}
