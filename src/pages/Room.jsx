@@ -23,8 +23,8 @@ const getYouTubeId = (url) => {
     return match ? match[1] : null;
 };
 
-// ✅ Local Video
-function LocalVideo() {
+// ✅ LocalVideo - உன் face
+function LocalVideo({ small }) {
     const videoRef = useRef(null);
     const { localParticipant } = useLocalParticipant();
     const attachedRef = useRef(false);
@@ -41,11 +41,11 @@ function LocalVideo() {
             }
         };
         tryAttach();
-        const interval = setInterval(tryAttach, 500);
-        setTimeout(() => clearInterval(interval), 10000);
+        const iv = setInterval(tryAttach, 500);
+        setTimeout(() => clearInterval(iv), 10000);
         localParticipant.on("localTrackPublished", tryAttach);
         return () => {
-            clearInterval(interval);
+            clearInterval(iv);
             localParticipant.off("localTrackPublished", tryAttach);
             try {
                 const pub = localParticipant.getTrackPublication("camera");
@@ -56,20 +56,25 @@ function LocalVideo() {
         };
     }, [localParticipant?.sid]);
 
+    const w = small ? "120px" : "175px";
+    const h = small ? "90px" : "130px";
+
     return (
         <div style={{ textAlign: "center" }}>
-            <p style={{ color: "#ff6b35", fontSize: "11px", margin: "0 0 4px 0" }}>நீ 🟠</p>
-            <div style={{ position: "relative", width: "175px", height: "130px", borderRadius: "10px", overflow: "hidden", border: "2px solid #ff6b35", backgroundColor: "#111" }}>
+            {!small && <p style={{ color: "#ff6b35", fontSize: "11px", margin: "0 0 4px 0" }}>நீ 🟠</p>}
+            <div style={{ position: "relative", width: w, height: h, borderRadius: "10px", overflow: "hidden", border: `2px solid #ff6b35`, backgroundColor: "#111" }}>
                 <video ref={videoRef} autoPlay muted playsInline
                     style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }} />
-                <div style={{ position: "absolute", bottom: "4px", left: "6px", color: "white", fontSize: "10px", backgroundColor: "rgba(0,0,0,0.6)", padding: "2px 5px", borderRadius: "4px" }}>நீ 👤</div>
+                <div style={{ position: "absolute", bottom: "3px", left: "5px", color: "white", fontSize: "9px", backgroundColor: "rgba(0,0,0,0.6)", padding: "1px 4px", borderRadius: "3px" }}>
+                    நீ 🟠
+                </div>
             </div>
         </div>
     );
 }
 
-// ✅ Remote Video
-function RemoteVideo() {
+// ✅ RemoteVideo - partner face
+function RemoteVideo({ small }) {
     const videoRef = useRef(null);
     const remoteParticipants = useRemoteParticipants();
     const remoteParticipant = remoteParticipants[0];
@@ -87,12 +92,12 @@ function RemoteVideo() {
             }
         };
         tryAttach();
-        const interval = setInterval(tryAttach, 500);
-        setTimeout(() => clearInterval(interval), 15000);
+        const iv = setInterval(tryAttach, 500);
+        setTimeout(() => clearInterval(iv), 15000);
         remoteParticipant.on("trackSubscribed", tryAttach);
         remoteParticipant.on("trackPublished", tryAttach);
         return () => {
-            clearInterval(interval);
+            clearInterval(iv);
             remoteParticipant.off("trackSubscribed", tryAttach);
             remoteParticipant.off("trackPublished", tryAttach);
             try {
@@ -104,116 +109,80 @@ function RemoteVideo() {
         };
     }, [remoteParticipant?.sid]);
 
+    const w = small ? "120px" : "175px";
+    const h = small ? "90px" : "130px";
+
     return (
         <div style={{ textAlign: "center" }}>
-            <p style={{ color: "#27ae60", fontSize: "11px", margin: "0 0 4px 0" }}>Partner 🟢</p>
-            <div style={{ position: "relative", width: "175px", height: "130px", borderRadius: "10px", overflow: "hidden", border: "2px solid #27ae60", backgroundColor: "#111" }}>
+            {!small && <p style={{ color: "#27ae60", fontSize: "11px", margin: "0 0 4px 0" }}>Partner 🟢</p>}
+            <div style={{ position: "relative", width: w, height: h, borderRadius: "10px", overflow: "hidden", border: "2px solid #27ae60", backgroundColor: "#111" }}>
                 {remoteParticipant ? (
                     <video ref={videoRef} autoPlay playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 ) : (
-                    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "8px" }}>
-                        <span style={{ fontSize: "28px" }}>👤</span>
-                        <span style={{ color: "#555", fontSize: "10px", textAlign: "center", padding: "0 8px" }}>Partner join பண்ண காத்திருக்கோம்</span>
+                    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <span style={{ fontSize: "22px" }}>👤</span>
                     </div>
                 )}
-                {remoteParticipant && (
-                    <div style={{ position: "absolute", bottom: "4px", left: "6px", color: "white", fontSize: "10px", backgroundColor: "rgba(0,0,0,0.6)", padding: "2px 5px", borderRadius: "4px" }}>
-                        {remoteParticipant.identity} 👤
-                    </div>
-                )}
+                <div style={{ position: "absolute", bottom: "3px", left: "5px", color: "white", fontSize: "9px", backgroundColor: "rgba(0,0,0,0.6)", padding: "1px 4px", borderRadius: "3px" }}>
+                    {remoteParticipant ? `${remoteParticipant.identity} 🟢` : "காத்திருக்கோம்"}
+                </div>
             </div>
         </div>
     );
 }
 
-// ✅ Fullscreen Partner Small Overlay - our fullscreen-ல மட்டும்
-function FullscreenPartnerOverlay() {
-    const videoRef = useRef(null);
-    const remoteParticipants = useRemoteParticipants();
-    const remoteParticipant = remoteParticipants[0];
-    const attachedRef = useRef(false);
-
-    useEffect(() => {
-        if (!remoteParticipant) return;
-        attachedRef.current = false;
-        const tryAttach = () => {
-            const pub = remoteParticipant.getTrackPublication("camera");
-            const track = pub?.videoTrack ?? pub?.track;
-            if (track && videoRef.current && !attachedRef.current) {
-                track.attach(videoRef.current);
-                attachedRef.current = true;
-            }
-        };
-        tryAttach();
-        const interval = setInterval(tryAttach, 500);
-        setTimeout(() => clearInterval(interval), 15000);
-        remoteParticipant.on("trackSubscribed", tryAttach);
-        return () => {
-            clearInterval(interval);
-            remoteParticipant.off("trackSubscribed", tryAttach);
-            try {
-                const pub = remoteParticipant.getTrackPublication("camera");
-                const track = pub?.videoTrack ?? pub?.track;
-                if (track && videoRef.current) track.detach(videoRef.current);
-            } catch { }
-            attachedRef.current = false;
-        };
-    }, [remoteParticipant?.sid]);
-
-    if (!remoteParticipant) return null;
-
+// ✅ Fullscreen mode-ல காட்டும் - இரண்டு faces side by side small
+function FullscreenFaceBar({ onEnd, isMuted, isCamOff, onToggleMic, onToggleCam }) {
     return (
         <div style={{
-            position: "absolute", bottom: "80px", right: "20px",
-            width: "180px", height: "135px",
-            borderRadius: "14px", overflow: "hidden",
-            border: "3px solid #27ae60",
-            zIndex: 100,
-            boxShadow: "0 4px 24px rgba(0,0,0,0.9)",
-            backgroundColor: "#111",
+            position: "absolute",
+            bottom: "20px",
+            right: "20px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "8px",
+            zIndex: 500,
+            alignItems: "flex-end",
         }}>
-            <video ref={videoRef} autoPlay playsInline
-                style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            <div style={{
-                position: "absolute", bottom: "4px", left: "6px",
-                color: "white", fontSize: "11px",
-                backgroundColor: "rgba(0,0,0,0.7)",
-                padding: "2px 6px", borderRadius: "4px",
-            }}>
-                {remoteParticipant.identity} 💚
+            {/* Both faces */}
+            <div style={{ display: "flex", gap: "8px" }}>
+                <LocalVideo small />
+                <RemoteVideo small />
+            </div>
+            {/* Controls */}
+            <div style={{ display: "flex", gap: "6px" }}>
+                <button onClick={onToggleMic} style={{ padding: "6px 12px", color: "white", border: "none", borderRadius: "16px", cursor: "pointer", fontSize: "12px", backgroundColor: isMuted ? "#e74c3c" : "rgba(0,0,0,0.7)" }}>
+                    {isMuted ? "🔇" : "🎤"}
+                </button>
+                <button onClick={onToggleCam} style={{ padding: "6px 12px", color: "white", border: "none", borderRadius: "16px", cursor: "pointer", fontSize: "12px", backgroundColor: isCamOff ? "#e74c3c" : "rgba(0,0,0,0.7)" }}>
+                    {isCamOff ? "📷" : "📸"}
+                </button>
+                <button onClick={onEnd} style={{ padding: "6px 12px", color: "white", border: "none", borderRadius: "16px", cursor: "pointer", fontSize: "12px", backgroundColor: "#e74c3c" }}>
+                    📵
+                </button>
             </div>
         </div>
     );
 }
 
-// ✅ Draggable VideoCallUI (normal mode only)
-function VideoCallUI({ onEnd }) {
-    const { localParticipant } = useLocalParticipant();
-    const [isMuted, setIsMuted] = useState(false);
-    const [isCamOff, setIsCamOff] = useState(false);
+// ✅ Normal mode popup
+function NormalCallPopup({ onEnd, isMuted, isCamOff, onToggleMic, onToggleCam }) {
     const [pos, setPos] = useState({ x: window.innerWidth - 430, y: window.innerHeight - 420 });
     const dragging = useRef(false);
     const offset = useRef({ x: 0, y: 0 });
 
     useEffect(() => {
-        const onMouseMove = (e) => { if (!dragging.current) return; setPos({ x: e.clientX - offset.current.x, y: e.clientY - offset.current.y }); };
-        const onMouseUp = () => { dragging.current = false; };
-        const onTouchMove = (e) => { if (!dragging.current) return; setPos({ x: e.touches[0].clientX - offset.current.x, y: e.touches[0].clientY - offset.current.y }); };
-        const onTouchEnd = () => { dragging.current = false; };
-        window.addEventListener("mousemove", onMouseMove);
-        window.addEventListener("mouseup", onMouseUp);
-        window.addEventListener("touchmove", onTouchMove);
-        window.addEventListener("touchend", onTouchEnd);
+        const onMM = (e) => { if (!dragging.current) return; setPos({ x: e.clientX - offset.current.x, y: e.clientY - offset.current.y }); };
+        const onMU = () => { dragging.current = false; };
+        const onTM = (e) => { if (!dragging.current) return; setPos({ x: e.touches[0].clientX - offset.current.x, y: e.touches[0].clientY - offset.current.y }); };
+        const onTE = () => { dragging.current = false; };
+        window.addEventListener("mousemove", onMM); window.addEventListener("mouseup", onMU);
+        window.addEventListener("touchmove", onTM); window.addEventListener("touchend", onTE);
         return () => {
-            window.removeEventListener("mousemove", onMouseMove);
-            window.removeEventListener("mouseup", onMouseUp);
-            window.removeEventListener("touchmove", onTouchMove);
-            window.removeEventListener("touchend", onTouchEnd);
+            window.removeEventListener("mousemove", onMM); window.removeEventListener("mouseup", onMU);
+            window.removeEventListener("touchmove", onTM); window.removeEventListener("touchend", onTE);
         };
     }, []);
-
-    const toggleMic = async () => { if (localParticipant) { await localParticipant.setMicrophoneEnabled(isMuted); setIsMuted(!isMuted); } };
-    const toggleCam = async () => { if (localParticipant) { await localParticipant.setCameraEnabled(isCamOff); setIsCamOff(!isCamOff); } };
 
     return (
         <div style={{ position: "fixed", left: pos.x, top: pos.y, width: "390px", backgroundColor: "#1a1a1a", borderRadius: "16px", border: "2px solid #27ae60", zIndex: 9999, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.9)", userSelect: "none" }}>
@@ -230,13 +199,13 @@ function VideoCallUI({ onEnd }) {
                 <RemoteVideo />
             </div>
             <div style={{ padding: "10px 12px", borderTop: "1px solid #333", display: "flex", gap: "8px", justifyContent: "center" }}>
-                <button onClick={toggleMic} style={{ padding: "8px 14px", color: "white", border: "1px solid #444", borderRadius: "8px", cursor: "pointer", fontSize: "12px", fontWeight: "bold", backgroundColor: isMuted ? "#e74c3c" : "#2a2a2a" }}>
+                <button onClick={onToggleMic} style={{ padding: "8px 14px", color: "white", border: "1px solid #444", borderRadius: "8px", cursor: "pointer", fontSize: "12px", backgroundColor: isMuted ? "#e74c3c" : "#2a2a2a" }}>
                     {isMuted ? "🔇 Muted" : "🎤 Mic On"}
                 </button>
-                <button onClick={toggleCam} style={{ padding: "8px 14px", color: "white", border: "1px solid #444", borderRadius: "8px", cursor: "pointer", fontSize: "12px", fontWeight: "bold", backgroundColor: isCamOff ? "#e74c3c" : "#2a2a2a" }}>
+                <button onClick={onToggleCam} style={{ padding: "8px 14px", color: "white", border: "1px solid #444", borderRadius: "8px", cursor: "pointer", fontSize: "12px", backgroundColor: isCamOff ? "#e74c3c" : "#2a2a2a" }}>
                     {isCamOff ? "📷 Cam Off" : "📸 Cam On"}
                 </button>
-                <button onClick={onEnd} style={{ padding: "8px 14px", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "12px", fontWeight: "bold", backgroundColor: "#e74c3c" }}>
+                <button onClick={onEnd} style={{ padding: "8px 14px", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "12px", backgroundColor: "#e74c3c" }}>
                     📵 End
                 </button>
             </div>
@@ -244,6 +213,27 @@ function VideoCallUI({ onEnd }) {
     );
 }
 
+// ✅ Main wrapper - LiveKitRoom-க்கு inside-ல call controls
+function CallUI({ isFullscreen, onEnd }) {
+    const { localParticipant } = useLocalParticipant();
+    const [isMuted, setIsMuted] = useState(false);
+    const [isCamOff, setIsCamOff] = useState(false);
+
+    const toggleMic = async () => {
+        if (localParticipant) { await localParticipant.setMicrophoneEnabled(isMuted); setIsMuted(!isMuted); }
+    };
+    const toggleCam = async () => {
+        if (localParticipant) { await localParticipant.setCameraEnabled(isCamOff); setIsCamOff(!isCamOff); }
+    };
+
+    return isFullscreen ? (
+        <FullscreenFaceBar onEnd={onEnd} isMuted={isMuted} isCamOff={isCamOff} onToggleMic={toggleMic} onToggleCam={toggleCam} />
+    ) : (
+        <NormalCallPopup onEnd={onEnd} isMuted={isMuted} isCamOff={isCamOff} onToggleMic={toggleMic} onToggleCam={toggleCam} />
+    );
+}
+
+// ===================== MAIN ROOM =====================
 function Room() {
     const { roomId } = useParams();
     const [roomData, setRoomData] = useState(null);
@@ -262,9 +252,8 @@ function Room() {
     const [incomingCall, setIncomingCall] = useState(false);
     const [callStatus, setCallStatus] = useState(null);
     const [callerName, setCallerName] = useState("");
-    // ✅ Our own fullscreen state
-    const [isOurFullscreen, setIsOurFullscreen] = useState(false);
-    const playerWrapperRef = useRef(null);
+    const [isFullscreen, setIsFullscreen] = useState(false);
+
     const iframeRef = useRef(null);
     const chatEndRef = useRef(null);
     const usernameRef = useRef("");
@@ -272,30 +261,14 @@ function Room() {
     useEffect(() => { usernameRef.current = username; }, [username]);
     useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-    // ✅ Our custom fullscreen toggle
-    const toggleFullscreen = () => {
-        if (!isOurFullscreen) {
-            // Fullscreen ON - hide chat, expand player
-            setShowChat(false);
-            setIsOurFullscreen(true);
-        } else {
-            // Fullscreen OFF
-            setIsOurFullscreen(false);
-        }
-    };
-
-    // ✅ ESC key to exit fullscreen
+    // ESC to exit fullscreen
     useEffect(() => {
-        const onKeyDown = (e) => {
-            if (e.key === "Escape" && isOurFullscreen) {
-                setIsOurFullscreen(false);
-            }
-        };
-        window.addEventListener("keydown", onKeyDown);
-        return () => window.removeEventListener("keydown", onKeyDown);
-    }, [isOurFullscreen]);
+        const fn = (e) => { if (e.key === "Escape") setIsFullscreen(false); };
+        window.addEventListener("keydown", fn);
+        return () => window.removeEventListener("keydown", fn);
+    }, []);
 
-    // ✅ YouTube mute when call active
+    // YouTube mute when call
     useEffect(() => {
         if (!iframeRef.current) return;
         try {
@@ -308,7 +281,7 @@ function Room() {
     // Room Sync
     useEffect(() => {
         const q = query(collection(db, "rooms"), where("roomId", "==", roomId));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
+        return onSnapshot(q, (snapshot) => {
             if (!snapshot.empty) {
                 const docData = snapshot.docs[0];
                 setRoomDocId(docData.id);
@@ -317,53 +290,49 @@ function Room() {
                 if (!isSyncing) setIsPlaying(data.isPlaying);
             }
         });
-        return () => unsubscribe();
     }, [roomId, isSyncing]);
 
-    // Call Status Listener
+    // Call Status
     useEffect(() => {
         if (!roomDocId || !nameSet) return;
-        const unsubscribe = onSnapshot(doc(db, "rooms", roomDocId), (snap) => {
+        return onSnapshot(doc(db, "rooms", roomDocId), (snap) => {
             const data = snap.data();
             if (!data) return;
-            const currentUser = usernameRef.current;
-            if (data.callStatus === "calling" && data.callBy !== currentUser) {
+            const me = usernameRef.current;
+            if (data.callStatus === "calling" && data.callBy !== me) {
                 setCallerName(data.callBy || "Partner");
                 setIncomingCall(true);
             }
-            if (data.callStatus === "ended" && data.callBy !== currentUser) {
+            if (data.callStatus === "ended" && data.callBy !== me) {
                 setIncomingCall(false);
                 setCallStatus(null);
                 setShowVideoCall(false);
                 setLivekitToken(null);
             }
         });
-        return () => unsubscribe();
     }, [roomDocId, nameSet]);
 
     // Chat
     useEffect(() => {
         const q = query(collection(db, "chats"), where("roomId", "==", roomId), orderBy("createdAt", "asc"));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
+        return onSnapshot(q, (snapshot) => {
             setMessages(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
         });
-        return () => unsubscribe();
     }, [roomId]);
 
     // Reactions
     useEffect(() => {
         const q = query(collection(db, "reactions"), where("roomId", "==", roomId), orderBy("createdAt", "asc"));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
+        return onSnapshot(q, (snapshot) => {
             snapshot.docChanges().forEach((change) => {
                 if (change.type === "added") {
-                    const data = change.doc.data();
+                    const { emoji } = change.doc.data();
                     const id = change.doc.id;
-                    setFloatingReactions((prev) => [...prev, { id, emoji: data.emoji, x: Math.random() * 70 + 10 }]);
+                    setFloatingReactions((prev) => [...prev, { id, emoji, x: Math.random() * 70 + 10 }]);
                     setTimeout(() => setFloatingReactions((prev) => prev.filter((r) => r.id !== id)), 3000);
                 }
             });
         });
-        return () => unsubscribe();
     }, [roomId]);
 
     const updatePlayState = async (playing) => {
@@ -372,9 +341,6 @@ function Room() {
         await updateDoc(doc(db, "rooms", roomDocId), { isPlaying: playing });
         setTimeout(() => setIsSyncing(false), 1000);
     };
-
-    const handlePlay = async () => { setIsPlaying(true); await updatePlayState(true); };
-    const handlePause = async () => { setIsPlaying(false); await updatePlayState(false); };
 
     const fetchToken = async () => {
         const r = await fetch(`${TOKEN_SERVER}/api/token?roomName=room-${roomId}&participantName=${username}`);
@@ -432,77 +398,81 @@ function Room() {
         setNewMessage("");
     };
 
-    const copyLink = () => {
-        navigator.clipboard.writeText(window.location.href);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    };
-
-    const shareWhatsApp = () => {
-        window.open(`https://wa.me/?text=${encodeURIComponent(`🎬 என்னோட கூட movie பாரு! ${window.location.href}`)}`, "_blank");
-    };
-
     if (!nameSet) {
         return (
-            <div style={styles.nameContainer}>
-                <div style={styles.nameCard}>
-                    <h2 style={styles.nameTitle}>👋 உன் பேர் என்ன?</h2>
+            <div style={S.nameContainer}>
+                <div style={S.nameCard}>
+                    <h2 style={S.nameTitle}>👋 உன் பேர் என்ன?</h2>
                     <input type="text" placeholder="உன் பேர் type பண்ணு..." value={username}
                         onChange={(e) => setUsername(e.target.value)}
                         onKeyPress={(e) => e.key === "Enter" && username.trim() && setNameSet(true)}
-                        style={styles.nameInput} autoFocus />
-                    <button onClick={() => username.trim() && setNameSet(true)} style={styles.nameBtn}>🚀 Join Room</button>
+                        style={S.nameInput} autoFocus />
+                    <button onClick={() => username.trim() && setNameSet(true)} style={S.nameBtn}>🚀 Join Room</button>
                 </div>
             </div>
         );
     }
 
-    if (!roomData) return <div style={styles.loading}><p>⏳ Room load ஆகுது...</p></div>;
+    if (!roomData) return <div style={S.loading}><p>⏳ Room load ஆகுது...</p></div>;
 
     const youtubeId = getYouTubeId(roomData.movieUrl);
 
-    // ✅ Fullscreen layout
-    if (isOurFullscreen) {
+    // ===================== VIDEO PLAYER (reuse in both modes) =====================
+    const VideoPlayer = (
+        <>
+            {youtubeId ? (
+                <div style={{ width: "100%", height: "100%", position: "relative" }}>
+                    <iframe
+                        ref={iframeRef}
+                        src={`https://www.youtube.com/embed/${youtubeId}?autoplay=${isPlaying ? 1 : 0}&controls=1&enablejsapi=1&origin=${window.location.origin}&rel=0`}
+                        style={{ width: "100%", height: "100%", border: "none" }}
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                    />
+                    <div style={S.syncOverlay}>
+                        <button onClick={isPlaying ? () => { setIsPlaying(false); updatePlayState(false); } : () => { setIsPlaying(true); updatePlayState(true); }}
+                            style={{ ...S.syncBtn, backgroundColor: isPlaying ? "#555" : "#ff6b35" }}>
+                            {isPlaying ? "⏸ Pause (Sync)" : "▶ Play (Sync)"}
+                        </button>
+                    </div>
+                </div>
+            ) : (
+                <video src={roomData.movieUrl} controls
+                    style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
+                    onPlay={() => { setIsPlaying(true); updatePlayState(true); }}
+                    onPause={() => { setIsPlaying(false); updatePlayState(false); }} />
+            )}
+            {floatingReactions.map((r) => (
+                <div key={r.id} style={{ ...S.floatingEmoji, left: `${r.x}%` }}>{r.emoji}</div>
+            ))}
+        </>
+    );
+
+    // ===================== FULLSCREEN MODE =====================
+    if (isFullscreen) {
         return (
-            <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "#000", zIndex: 100 }}>
-                {/* Video - full screen */}
-                <div ref={playerWrapperRef} style={{ width: "100%", height: "100%", position: "relative" }}>
-                    {youtubeId ? (
-                        <iframe
-                            ref={iframeRef}
-                            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=${isPlaying ? 1 : 0}&controls=1&enablejsapi=1&origin=${window.location.origin}&rel=0`}
-                            style={{ width: "100%", height: "100%", border: "none" }}
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                            allowFullScreen
-                        />
-                    ) : (
-                        <video src={roomData.movieUrl} controls
-                            style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
-                            onPlay={handlePlay} onPause={handlePause} />
-                    )}
+            <div style={{ position: "fixed", inset: 0, backgroundColor: "#000", zIndex: 9000 }}>
+                {/* Video */}
+                <div style={{ width: "100%", height: "100%", position: "relative" }}>
+                    {VideoPlayer}
 
-                    {/* ✅ Floating reactions */}
-                    {floatingReactions.map((r) => (
-                        <div key={r.id} style={{ ...styles.floatingEmoji, left: `${r.x}%` }}>{r.emoji}</div>
-                    ))}
-
-                    {/* ✅ Exit fullscreen button */}
-                    <button onClick={toggleFullscreen}
-                        style={{ position: "absolute", top: "16px", left: "16px", padding: "8px 16px", backgroundColor: "rgba(0,0,0,0.7)", color: "white", border: "1px solid #555", borderRadius: "8px", cursor: "pointer", fontSize: "13px", zIndex: 200 }}>
-                        ✕ Exit Fullscreen
+                    {/* Exit button */}
+                    <button onClick={() => setIsFullscreen(false)}
+                        style={{ position: "absolute", top: "16px", left: "16px", padding: "8px 16px", backgroundColor: "rgba(0,0,0,0.75)", color: "white", border: "1px solid #555", borderRadius: "8px", cursor: "pointer", fontSize: "13px", zIndex: 9100 }}>
+                        ✕ Exit
                     </button>
 
-                    {/* ✅ Sync button */}
-                    {youtubeId && (
-                        <div style={{ position: "absolute", bottom: "20px", left: "50%", transform: "translateX(-50%)", zIndex: 200 }}>
-                            <button onClick={isPlaying ? handlePause : handlePlay}
-                                style={{ padding: "8px 24px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", backgroundColor: isPlaying ? "#555" : "#ff6b35" }}>
-                                {isPlaying ? "⏸ Pause (Sync)" : "▶ Play (Sync)"}
+                    {/* ✅ Reactions bar */}
+                    <div style={{ position: "absolute", bottom: "20px", left: "20px", display: "flex", gap: "8px", zIndex: 9100 }}>
+                        {REACTIONS.map((emoji) => (
+                            <button key={emoji} onClick={() => sendReaction(emoji)}
+                                style={{ fontSize: "24px", backgroundColor: "rgba(0,0,0,0.5)", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>
+                                {emoji}
                             </button>
-                        </div>
-                    )}
+                        ))}
+                    </div>
 
-                    {/* ✅ Partner face - our div-ல இருக்கு so always visible! */}
+                    {/* ✅ CallUI inside fullscreen div - partner face இங்க தெரியும்! */}
                     {showVideoCall && livekitToken && (
                         <LiveKitRoom
                             token={livekitToken}
@@ -513,7 +483,7 @@ function Room() {
                             onDisconnected={endVideoCall}
                         >
                             <RoomAudioRenderer />
-                            <FullscreenPartnerOverlay />
+                            <CallUI isFullscreen={true} onEnd={endVideoCall} />
                         </LiveKitRoom>
                     )}
                 </div>
@@ -521,64 +491,43 @@ function Room() {
         );
     }
 
-    // Normal layout
+    // ===================== NORMAL MODE =====================
     return (
-        <div style={styles.container}>
-            <div style={styles.mainLayout}>
-                <div style={styles.playerSection}>
-                    <div style={styles.playerWrapper}>
-                        {youtubeId ? (
-                            <div style={{ width: "100%", height: "100%", position: "relative" }}>
-                                <iframe
-                                    ref={iframeRef}
-                                    src={`https://www.youtube.com/embed/${youtubeId}?autoplay=${isPlaying ? 1 : 0}&controls=1&enablejsapi=1&origin=${window.location.origin}&rel=0`}
-                                    style={{ width: "100%", height: "100%", border: "none" }}
-                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                                    allowFullScreen
-                                />
-                                <div style={styles.syncOverlay}>
-                                    <button onClick={isPlaying ? handlePause : handlePlay}
-                                        style={{ ...styles.syncBtn, backgroundColor: isPlaying ? "#555" : "#ff6b35" }}>
-                                        {isPlaying ? "⏸ Pause (Sync)" : "▶ Play (Sync)"}
-                                    </button>
-                                </div>
-                            </div>
-                        ) : (
-                            <video src={roomData.movieUrl} controls
-                                style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
-                                onPlay={handlePlay} onPause={handlePause} />
-                        )}
-                        {floatingReactions.map((r) => (
-                            <div key={r.id} style={{ ...styles.floatingEmoji, left: `${r.x}%` }}>{r.emoji}</div>
-                        ))}
+        <div style={S.container}>
+            <div style={S.mainLayout}>
+                <div style={S.playerSection}>
+                    <div style={S.playerWrapper}>
+                        {VideoPlayer}
                     </div>
 
-                    <div style={styles.reactionBar}>
+                    <div style={S.reactionBar}>
                         {REACTIONS.map((emoji) => (
-                            <button key={emoji} onClick={() => sendReaction(emoji)} style={styles.reactionBtn}>{emoji}</button>
+                            <button key={emoji} onClick={() => sendReaction(emoji)} style={S.reactionBtn}>{emoji}</button>
                         ))}
                     </div>
 
-                    <div style={styles.controls}>
-                        <div style={styles.roomInfo}>
-                            <span style={styles.roomLabel}>Room:</span>
-                            <span style={styles.roomId}>{roomId}</span>
+                    <div style={S.controls}>
+                        <div style={S.roomInfo}>
+                            <span style={S.roomLabel}>Room: </span>
+                            <span style={S.roomId}>{roomId}</span>
                         </div>
-                        <div style={styles.buttonGroup}>
+                        <div style={S.buttonGroup}>
                             <button
                                 onClick={showVideoCall ? endVideoCall : startVideoCall}
                                 disabled={callStatus === "calling"}
-                                style={{ ...styles.controlBtn, backgroundColor: showVideoCall ? "#e74c3c" : callStatus === "calling" ? "#666" : "#27ae60" }}
-                            >
+                                style={{ ...S.controlBtn, backgroundColor: showVideoCall ? "#e74c3c" : callStatus === "calling" ? "#666" : "#27ae60" }}>
                                 {showVideoCall ? "📵 Call End" : callStatus === "calling" ? "⏳ Calling..." : "📹 Video Call"}
                             </button>
-                            {/* ✅ Our Fullscreen Button */}
-                            <button onClick={toggleFullscreen} style={{ ...styles.controlBtn, backgroundColor: "#8e44ad" }}>
+                            <button onClick={() => setIsFullscreen(true)} style={{ ...S.controlBtn, backgroundColor: "#8e44ad" }}>
                                 ⛶ Full Screen
                             </button>
-                            <button onClick={copyLink} style={styles.controlBtn}>{copied ? "✅ Copied!" : "🔗 Copy Link"}</button>
-                            <button onClick={shareWhatsApp} style={{ ...styles.controlBtn, backgroundColor: "#25D366" }}>💬 WhatsApp</button>
-                            <button onClick={() => setShowChat(!showChat)} style={{ ...styles.controlBtn, backgroundColor: "#ff6b35" }}>
+                            <button onClick={() => { navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); }} style={S.controlBtn}>
+                                {copied ? "✅ Copied!" : "🔗 Copy Link"}
+                            </button>
+                            <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`🎬 என்னோட கூட movie பாரு! ${window.location.href}`)}`, "_blank")} style={{ ...S.controlBtn, backgroundColor: "#25D366" }}>
+                                💬 WhatsApp
+                            </button>
+                            <button onClick={() => setShowChat(!showChat)} style={{ ...S.controlBtn, backgroundColor: "#ff6b35" }}>
                                 {showChat ? "💬 Hide Chat" : "💬 Show Chat"}
                             </button>
                         </div>
@@ -586,27 +535,27 @@ function Room() {
                 </div>
 
                 {showChat && (
-                    <div style={styles.chatSection}>
-                        <div style={styles.chatHeader}>
+                    <div style={S.chatSection}>
+                        <div style={S.chatHeader}>
                             <span>💬 Chat</span>
-                            <span style={styles.chatUser}>👤 {username}</span>
+                            <span style={S.chatUser}>👤 {username}</span>
                         </div>
-                        <div style={styles.messageList}>
-                            {messages.length === 0 && <p style={styles.noMessages}>message இல்ல - first message பண்ணு! 👋</p>}
+                        <div style={S.messageList}>
+                            {messages.length === 0 && <p style={S.noMessages}>message இல்ல - first message பண்ணு! 👋</p>}
                             {messages.map((msg) => (
-                                <div key={msg.id} style={{ ...styles.messageItem, alignSelf: msg.username === username ? "flex-end" : "flex-start", backgroundColor: msg.username === username ? "#ff6b35" : "#2a2a2a" }}>
-                                    {msg.username !== username && <p style={styles.msgUsername}>{msg.username}</p>}
-                                    <p style={styles.msgText}>{msg.message}</p>
+                                <div key={msg.id} style={{ ...S.messageItem, alignSelf: msg.username === username ? "flex-end" : "flex-start", backgroundColor: msg.username === username ? "#ff6b35" : "#2a2a2a" }}>
+                                    {msg.username !== username && <p style={S.msgUsername}>{msg.username}</p>}
+                                    <p style={S.msgText}>{msg.message}</p>
                                 </div>
                             ))}
                             <div ref={chatEndRef} />
                         </div>
-                        <div style={styles.chatInput}>
+                        <div style={S.chatInput}>
                             <input type="text" placeholder="Message type பண்ணு..." value={newMessage}
                                 onChange={(e) => setNewMessage(e.target.value)}
                                 onKeyPress={(e) => e.key === "Enter" && sendMessage()}
-                                style={styles.msgInput} />
-                            <button onClick={sendMessage} style={styles.sendBtn}>➤</button>
+                                style={S.msgInput} />
+                            <button onClick={sendMessage} style={S.sendBtn}>➤</button>
                         </div>
                     </div>
                 )}
@@ -614,20 +563,20 @@ function Room() {
 
             {/* Incoming Call */}
             {incomingCall && (
-                <div style={styles.incomingOverlay}>
-                    <div style={styles.incomingCard}>
+                <div style={S.incomingOverlay}>
+                    <div style={S.incomingCard}>
                         <div style={{ fontSize: "56px", marginBottom: "8px" }}>📹</div>
                         <p style={{ color: "white", fontSize: "20px", fontWeight: "bold", margin: "0 0 8px 0" }}>Incoming Video Call!</p>
                         <p style={{ color: "#aaa", fontSize: "14px", margin: "0 0 28px 0" }}>{callerName} call பண்றாங்க... 💕</p>
                         <div style={{ display: "flex", gap: "16px", justifyContent: "center" }}>
-                            <button onClick={acceptCall} style={styles.acceptBtn}>✅ Accept</button>
-                            <button onClick={rejectCall} style={styles.rejectBtn}>❌ Reject</button>
+                            <button onClick={acceptCall} style={S.acceptBtn}>✅ Accept</button>
+                            <button onClick={rejectCall} style={S.rejectBtn}>❌ Reject</button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* Normal Video Call */}
+            {/* ✅ Normal mode LiveKitRoom */}
             {showVideoCall && livekitToken && (
                 <LiveKitRoom
                     token={livekitToken}
@@ -638,25 +587,19 @@ function Room() {
                     onDisconnected={endVideoCall}
                 >
                     <RoomAudioRenderer />
-                    <VideoCallUI onEnd={endVideoCall} />
+                    <CallUI isFullscreen={false} onEnd={endVideoCall} />
                 </LiveKitRoom>
             )}
 
             <style>{`
-                @keyframes floatUp {
-                    0% { transform: translateY(0) scale(1); opacity: 1; }
-                    100% { transform: translateY(-300px) scale(1.5); opacity: 0; }
-                }
-                @keyframes pulse {
-                    0%, 100% { box-shadow: 0 8px 40px rgba(39,174,96,0.3); }
-                    50% { box-shadow: 0 8px 60px rgba(39,174,96,0.6); }
-                }
+                @keyframes floatUp { 0%{transform:translateY(0) scale(1);opacity:1} 100%{transform:translateY(-300px) scale(1.5);opacity:0} }
+                @keyframes pulse { 0%,100%{box-shadow:0 8px 40px rgba(39,174,96,0.3)} 50%{box-shadow:0 8px 60px rgba(39,174,96,0.6)} }
             `}</style>
         </div>
     );
 }
 
-const styles = {
+const S = {
     container: { backgroundColor: "#0f0f0f", minHeight: "100vh", display: "flex", flexDirection: "column" },
     loading: { backgroundColor: "#0f0f0f", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: "18px" },
     nameContainer: { backgroundColor: "#0f0f0f", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" },
@@ -689,7 +632,7 @@ const styles = {
     chatInput: { padding: "12px", borderTop: "1px solid #333", display: "flex", gap: "8px" },
     msgInput: { flex: 1, padding: "10px 12px", backgroundColor: "#2a2a2a", border: "1px solid #333", borderRadius: "8px", color: "white", fontSize: "14px" },
     sendBtn: { padding: "10px 16px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "16px" },
-    incomingOverlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.75)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" },
+    incomingOverlay: { position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.75)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" },
     incomingCard: { backgroundColor: "#1a1a1a", borderRadius: "20px", border: "2px solid #27ae60", padding: "40px", textAlign: "center", animation: "pulse 1.5s infinite" },
     acceptBtn: { padding: "14px 32px", backgroundColor: "#27ae60", color: "white", border: "none", borderRadius: "12px", fontSize: "16px", cursor: "pointer", fontWeight: "bold" },
     rejectBtn: { padding: "14px 32px", backgroundColor: "#e74c3c", color: "white", border: "none", borderRadius: "12px", fontSize: "16px", cursor: "pointer", fontWeight: "bold" },
