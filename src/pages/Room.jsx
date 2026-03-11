@@ -14,7 +14,8 @@ import {
 import "@livekit/components-styles";
 
 const REACTIONS = ["❤️", "😂", "😮", "🔥", "👏", "😢"];
-const TOKEN_SERVER = "https://livekit-token-server-t3ko.onrender.com";
+// ✅ Render.com இல்லை - நம்ம Vercel app-லயே token API இருக்கு!
+const TOKEN_SERVER = "";
 
 const getYouTubeId = (url) => {
     const match = url.match(
@@ -32,25 +33,35 @@ function LocalVideo({ small }) {
     useEffect(() => {
         if (!localParticipant) return;
         attachedRef.current = false;
+
         const tryAttach = () => {
-            const pub = localParticipant.getTrackPublication("camera");
-            const track = pub?.videoTrack ?? pub?.track;
-            if (track && videoRef.current && !attachedRef.current) {
-                track.attach(videoRef.current);
-                attachedRef.current = true;
+            if (attachedRef.current || !videoRef.current) return;
+            // ✅ All camera publications try பண்றோம்
+            for (const pub of localParticipant.videoTrackPublications.values()) {
+                const track = pub.videoTrack ?? pub.track;
+                if (track) {
+                    track.attach(videoRef.current);
+                    attachedRef.current = true;
+                    return;
+                }
             }
         };
+
         tryAttach();
-        const iv = setInterval(tryAttach, 500);
-        setTimeout(() => clearInterval(iv), 10000);
+        const iv = setInterval(tryAttach, 800);
+        setTimeout(() => clearInterval(iv), 15000);
         localParticipant.on("localTrackPublished", tryAttach);
+        localParticipant.on("trackPublished", tryAttach);
+
         return () => {
             clearInterval(iv);
             localParticipant.off("localTrackPublished", tryAttach);
+            localParticipant.off("trackPublished", tryAttach);
             try {
-                const pub = localParticipant.getTrackPublication("camera");
-                const track = pub?.videoTrack ?? pub?.track;
-                if (track && videoRef.current) track.detach(videoRef.current);
+                for (const pub of localParticipant.videoTrackPublications.values()) {
+                    const track = pub.videoTrack ?? pub.track;
+                    if (track && videoRef.current) track.detach(videoRef.current);
+                }
             } catch { }
             attachedRef.current = false;
         };
@@ -83,27 +94,35 @@ function RemoteVideo({ small }) {
     useEffect(() => {
         if (!remoteParticipant) return;
         attachedRef.current = false;
+
         const tryAttach = () => {
-            const pub = remoteParticipant.getTrackPublication("camera");
-            const track = pub?.videoTrack ?? pub?.track;
-            if (track && videoRef.current && !attachedRef.current) {
-                track.attach(videoRef.current);
-                attachedRef.current = true;
+            if (attachedRef.current || !videoRef.current) return;
+            // ✅ All remote video publications try பண்றோம்
+            for (const pub of remoteParticipant.videoTrackPublications.values()) {
+                const track = pub.videoTrack ?? pub.track;
+                if (track && pub.isSubscribed) {
+                    track.attach(videoRef.current);
+                    attachedRef.current = true;
+                    return;
+                }
             }
         };
+
         tryAttach();
-        const iv = setInterval(tryAttach, 500);
-        setTimeout(() => clearInterval(iv), 15000);
+        const iv = setInterval(tryAttach, 800);
+        setTimeout(() => clearInterval(iv), 20000);
         remoteParticipant.on("trackSubscribed", tryAttach);
         remoteParticipant.on("trackPublished", tryAttach);
+
         return () => {
             clearInterval(iv);
             remoteParticipant.off("trackSubscribed", tryAttach);
             remoteParticipant.off("trackPublished", tryAttach);
             try {
-                const pub = remoteParticipant.getTrackPublication("camera");
-                const track = pub?.videoTrack ?? pub?.track;
-                if (track && videoRef.current) track.detach(videoRef.current);
+                for (const pub of remoteParticipant.videoTrackPublications.values()) {
+                    const track = pub.videoTrack ?? pub.track;
+                    if (track && videoRef.current) track.detach(videoRef.current);
+                }
             } catch { }
             attachedRef.current = false;
         };
@@ -343,39 +362,17 @@ function Room() {
         setTimeout(() => setIsSyncing(false), 1000);
     };
 
-    // ✅ Render.com sleep ஆயிருந்தா wake up பண்ணி retry பண்றோம்
+    // ✅ Vercel serverless - always awake, no sleep issue!
     const fetchToken = async () => {
-        const url = `${TOKEN_SERVER}/api/token?roomName=room-${roomId}&participantName=${username}`;
-
-        // First try - 8 second timeout
-        const fetchWithTimeout = (ms) => {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), ms);
-            return fetch(url, { signal: controller.signal })
-                .finally(() => clearTimeout(timer));
-        };
-
-        try {
-            // முதல் attempt
-            const r = await fetchWithTimeout(8000);
-            if (!r.ok) throw new Error("Server error");
-            const d = await r.json();
-            if (!d.token) throw new Error("No token");
-            return d.token;
-        } catch (e) {
-            // Render sleep ஆயிருந்தா - wake up call பண்ணி 15s wait பண்ணி retry
-            try {
-                await fetch(`${TOKEN_SERVER}/health`).catch(() => { });
-                await new Promise(res => setTimeout(res, 8000));
-                const r2 = await fetchWithTimeout(15000);
-                if (!r2.ok) throw new Error("Server error after retry");
-                const d2 = await r2.json();
-                if (!d2.token) throw new Error("No token after retry");
-                return d2.token;
-            } catch {
-                throw new Error("Token server respond பண்ணல - சில seconds wait பண்ணி மறுபடியும் try பண்ணு");
-            }
+        const url = `/api/token?roomName=room-${roomId}&participantName=${encodeURIComponent(username)}`;
+        const r = await fetch(url);
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            throw new Error(err.error || "Token fetch failed");
         }
+        const d = await r.json();
+        if (!d.token) throw new Error("No token received");
+        return d.token;
     };
 
     const startVideoCall = async () => {
