@@ -1,21 +1,8 @@
 {
-    "buildCommand": "npm run build",
-    "outputDirectory": "dist",
-    "framework": "vite",
-    "functions": {
-        "api/token.js": {
-            "memory": 512,
-            "maxDuration": 10
-        }
-    },
-    "routes": [
+    "rewrites": [
         {
-            "src": "/api/token",
-            "dest": "/api/token.js"
-        },
-        {
-            "src": "/(.*)",
-            "dest": "/index.html"
+            "source": "/(.*)",
+            "destination": "/index.html"
         }
     ]
 }
