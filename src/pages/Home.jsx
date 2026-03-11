@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { db, auth } from "../firebase";
 import { collection, addDoc } from "firebase/firestore";
@@ -21,6 +21,7 @@ function Home({ user }) {
     const [uploadProgress, setUploadProgress] = useState(0);
     const [error, setError] = useState("");
     const [dragOver, setDragOver] = useState(false);
+    const fileInputRef = useRef(null);
 
     const createRoom = async (url, type) => {
         const roomId = generateRoomId();
@@ -38,23 +39,20 @@ function Home({ user }) {
         navigate(`/room/${roomId}`);
     };
 
-    // ✅ File upload handler - mobile + desktop both work
     const handleFileUpload = async (file) => {
         if (!file) return;
 
-        // ✅ Check file type - video/* accept panna mobile la kadaiyathu, so manual check
         const isVideo = file.type.startsWith("video/") ||
-            file.name.match(/\.(mp4|mkv|avi|mov|webm|m4v|3gp|flv|wmv)$/i);
+            /\.(mp4|mkv|avi|mov|webm|m4v|3gp|flv|wmv)$/i.test(file.name);
 
         if (!isVideo) {
             setError("❌ Video file மட்டும் upload பண்ணு (MP4, MKV, MOV...)");
             return;
         }
 
-        // ✅ Size check - Cloudinary free = 100MB limit
-        const maxSize = 100 * 1024 * 1024; // 100MB
+        const maxSize = 100 * 1024 * 1024;
         if (file.size > maxSize) {
-            setError(`❌ File size too big! Maximum 100MB. உன் file: ${(file.size / 1024 / 1024).toFixed(0)}MB\n\nYouTube link use பண்ணு - அது better!`);
+            setError(`❌ File ${(file.size / 1024 / 1024).toFixed(0)}MB - Max 100MB!\nYouTube link use பண்ணு - better!`);
             return;
         }
 
@@ -68,7 +66,7 @@ function Home({ user }) {
             });
             await createRoom(url, "cloudinary");
         } catch (err) {
-            setError("❌ Upload fail ஆச்சு: " + err.message);
+            setError("❌ Upload fail: " + err.message);
         } finally {
             setUploading(false);
             setUploadProgress(0);
@@ -76,11 +74,11 @@ function Home({ user }) {
     };
 
     const handleFileChange = (e) => {
-        const file = e.target.files[0];
+        const file = e.target.files?.[0];
         if (file) handleFileUpload(file);
+        e.target.value = "";
     };
 
-    // ✅ Drag and drop
     const handleDrop = (e) => {
         e.preventDefault();
         setDragOver(false);
@@ -91,7 +89,7 @@ function Home({ user }) {
     const handleYouTubeOrLink = async () => {
         const url = movieUrl.trim();
         if (!url) { setError("❌ Link enter பண்ணு"); return; }
-
+        setError("");
         const ytId = getYouTubeId(url);
         if (ytId) {
             await createRoom(url, "youtube");
@@ -105,6 +103,8 @@ function Home({ user }) {
     const handleLogout = async () => {
         await signOut(auth);
     };
+
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
     return (
         <div style={styles.container}>
@@ -126,42 +126,62 @@ function Home({ user }) {
                 <h1 style={styles.title}>உன் partner-கூட movie பாரு 🍿</h1>
                 <p style={styles.subtitle}>Movie upload பண்ணு அல்லது YouTube link போடு</p>
 
-                {/* ✅ Upload Area - Drag & Drop + Click */}
                 {!uploading ? (
-                    <div
-                        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                        onDragLeave={() => setDragOver(false)}
-                        onDrop={handleDrop}
-                        style={{
-                            ...styles.uploadArea,
-                            borderColor: dragOver ? "#ff6b35" : "#333",
-                            backgroundColor: dragOver ? "rgba(255,107,53,0.05)" : "#111",
-                        }}
-                        onClick={() => document.getElementById("fileInput").click()}
-                    >
-                        <div style={{ fontSize: "48px", marginBottom: "12px" }}>📁</div>
-                        <p style={{ color: "white", fontSize: "16px", margin: "0 0 8px 0", fontWeight: "bold" }}>
-                            Click பண்ணி movie select பண்ணு
-                        </p>
-                        <p style={{ color: "#555", fontSize: "13px", margin: "0 0 4px 0" }}>
-                            அல்லது இங்க drag & drop பண்ணு
-                        </p>
-                        <p style={{ color: "#444", fontSize: "12px", margin: 0 }}>
-                            MP4, MKV, MOV, AVI • Max 100MB
-                        </p>
-
-                        {/* ✅ Mobile fix - no accept attribute, handle manually */}
-                        <input
-                            id="fileInput"
-                            type="file"
-                            accept="video/*,video/mp4,video/x-matroska,video/quicktime,video/x-msvideo,video/webm,.mp4,.mkv,.mov,.avi,.webm,.m4v,.3gp"
-                            onChange={handleFileChange}
-                            style={{ display: "none" }}
-                            capture={false}
-                        />
-                    </div>
+                    <>
+                        {isMobile ? (
+                            /* ✅ MOBILE: label directly wraps input - no JS click needed, no permission issue */
+                            <label style={styles.mobileLabel}>
+                                <span style={{ fontSize: "40px" }}>📁</span>
+                                <span style={{ color: "white", fontWeight: "bold", fontSize: "16px" }}>
+                                    Video File Select பண்ணு
+                                </span>
+                                <span style={{ color: "#888", fontSize: "12px" }}>
+                                    Gallery-இல் இருந்து video choose பண்ணு
+                                </span>
+                                <span style={{ color: "#555", fontSize: "11px" }}>
+                                    MP4, MKV, MOV • Max 100MB
+                                </span>
+                                <input
+                                    type="file"
+                                    accept="video/*"
+                                    onChange={handleFileChange}
+                                    style={{ display: "none" }}
+                                />
+                            </label>
+                        ) : (
+                            /* ✅ DESKTOP: Drag & Drop */
+                            <div
+                                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                                onDragLeave={() => setDragOver(false)}
+                                onDrop={handleDrop}
+                                onClick={() => fileInputRef.current?.click()}
+                                style={{
+                                    ...styles.uploadArea,
+                                    borderColor: dragOver ? "#ff6b35" : "#333",
+                                    backgroundColor: dragOver ? "rgba(255,107,53,0.05)" : "#111",
+                                }}
+                            >
+                                <div style={{ fontSize: "48px", marginBottom: "12px" }}>📁</div>
+                                <p style={{ color: "white", fontSize: "16px", margin: "0 0 8px 0", fontWeight: "bold" }}>
+                                    Click பண்ணி movie select பண்ணு
+                                </p>
+                                <p style={{ color: "#555", fontSize: "13px", margin: "0 0 4px 0" }}>
+                                    அல்லது இங்க drag & drop பண்ணு
+                                </p>
+                                <p style={{ color: "#444", fontSize: "12px", margin: 0 }}>
+                                    MP4, MKV, MOV, AVI • Max 100MB
+                                </p>
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept="video/*"
+                                    onChange={handleFileChange}
+                                    style={{ display: "none" }}
+                                />
+                            </div>
+                        )}
+                    </>
                 ) : (
-                    /* Upload Progress */
                     <div style={styles.progressContainer}>
                         <div style={{ fontSize: "32px", marginBottom: "12px" }}>⬆️</div>
                         <p style={{ color: "white", fontSize: "16px", margin: "0 0 16px 0" }}>
@@ -171,7 +191,7 @@ function Home({ user }) {
                             <div style={{ ...styles.progressFill, width: `${uploadProgress}%` }} />
                         </div>
                         <p style={{ color: "#555", fontSize: "12px", marginTop: "8px" }}>
-                            {uploadProgress < 50 ? "Upload ஆகுது..." : uploadProgress < 90 ? "கிட்டத்தட்ட ஆச்சு..." : "Ready ஆகுது..."}
+                            {uploadProgress < 40 ? "Upload ஆகுது..." : uploadProgress < 80 ? "கிட்டத்தட்ட ஆச்சு..." : "Ready ஆகுது..."}
                         </p>
                     </div>
                 )}
@@ -183,15 +203,15 @@ function Home({ user }) {
                     <div style={styles.dividerLine} />
                 </div>
 
-                {/* YouTube / Link Input */}
-                <div style={styles.linkSection}>
+                {/* YouTube Input */}
+                <div style={{ marginBottom: "16px" }}>
                     <p style={{ color: "#aaa", fontSize: "14px", margin: "0 0 10px 0" }}>
-                        🔗 YouTube link அல்லது Direct video URL
+                        🎬 YouTube link போடு (Best - no upload needed!)
                     </p>
-                    <div style={styles.inputRow}>
+                    <div style={{ display: "flex", gap: "8px" }}>
                         <input
                             type="url"
-                            placeholder="https://youtube.com/watch?v=... or https://..."
+                            placeholder="https://youtube.com/watch?v=..."
                             value={movieUrl}
                             onChange={(e) => { setMovieUrl(e.target.value); setError(""); }}
                             onKeyPress={(e) => e.key === "Enter" && handleYouTubeOrLink()}
@@ -208,82 +228,54 @@ function Home({ user }) {
                     </div>
                 )}
 
-                {/* Info */}
-                <div style={styles.infoBox}>
-                    <p style={styles.infoText}>💡 <strong>Tips:</strong></p>
-                    <p style={styles.infoText}>• YouTube link best - unlimited, fast ✅</p>
-                    <p style={styles.infoText}>• File upload max 100MB (Cloudinary free limit)</p>
-                    <p style={styles.infoText}>• Mobile-ல gallery-இல் இருந்து video select பண்ணலாம்</p>
-                </div>
+                {/* Mobile permission help */}
+                {isMobile && (
+                    <div style={{ backgroundColor: "#111", borderRadius: "10px", padding: "12px 14px", marginTop: "12px" }}>
+                        <p style={{ color: "#555", fontSize: "12px", margin: "0 0 4px 0" }}>
+                            ⚠️ Permission error வந்தா:
+                        </p>
+                        <p style={{ color: "#444", fontSize: "11px", margin: "0 0 2px 0" }}>
+                            Chrome → 🔒 → Site settings → Files → Allow
+                        </p>
+                        <p style={{ color: "#444", fontSize: "11px", margin: 0 }}>
+                            அல்லது YouTube link use பண்ணு ✅
+                        </p>
+                    </div>
+                )}
             </div>
-
-            <style>{`
-                @media (max-width: 600px) {
-                    .upload-area { padding: 24px 16px !important; }
-                }
-            `}</style>
         </div>
     );
 }
 
 const styles = {
-    container: {
-        backgroundColor: "#0f0f0f",
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        padding: "0 16px 40px",
-    },
-    header: {
-        width: "100%",
-        maxWidth: "600px",
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        padding: "20px 0",
-    },
+    container: { backgroundColor: "#0f0f0f", minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", padding: "0 16px 40px" },
+    header: { width: "100%", maxWidth: "600px", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 0" },
     logo: { color: "white", fontSize: "20px", fontWeight: "bold" },
     userInfo: { display: "flex", alignItems: "center", gap: "10px" },
     userName: { color: "#aaa", fontSize: "14px" },
     logoutBtn: { padding: "6px 12px", backgroundColor: "transparent", color: "#666", border: "1px solid #333", borderRadius: "6px", cursor: "pointer", fontSize: "13px" },
-    card: {
-        width: "100%",
-        maxWidth: "560px",
-        backgroundColor: "#1a1a1a",
-        borderRadius: "20px",
-        padding: "32px",
-        border: "1px solid #222",
+    card: { width: "100%", maxWidth: "560px", backgroundColor: "#1a1a1a", borderRadius: "20px", padding: "32px 24px", border: "1px solid #222" },
+    title: { color: "white", fontSize: "22px", margin: "0 0 8px 0", textAlign: "center", fontWeight: "bold" },
+    subtitle: { color: "#666", fontSize: "14px", margin: "0 0 24px 0", textAlign: "center" },
+    // ✅ Mobile label style - big tappable area
+    mobileLabel: {
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        gap: "10px", padding: "32px 20px",
+        backgroundColor: "#111", border: "2px dashed #ff6b35",
+        borderRadius: "14px", cursor: "pointer", textAlign: "center",
+        WebkitTapHighlightColor: "rgba(255,107,53,0.2)",
+        minHeight: "160px",
     },
-    title: { color: "white", fontSize: "24px", margin: "0 0 8px 0", textAlign: "center" },
-    subtitle: { color: "#666", fontSize: "14px", margin: "0 0 28px 0", textAlign: "center" },
-    uploadArea: {
-        border: "2px dashed #333",
-        borderRadius: "14px",
-        padding: "32px 20px",
-        textAlign: "center",
-        cursor: "pointer",
-        transition: "all 0.2s",
-    },
-    progressContainer: {
-        border: "2px solid #ff6b35",
-        borderRadius: "14px",
-        padding: "32px 20px",
-        textAlign: "center",
-        backgroundColor: "rgba(255,107,53,0.05)",
-    },
+    uploadArea: { border: "2px dashed #333", borderRadius: "14px", padding: "32px 20px", textAlign: "center", transition: "all 0.2s", cursor: "pointer" },
+    progressContainer: { border: "2px solid #ff6b35", borderRadius: "14px", padding: "32px 20px", textAlign: "center", backgroundColor: "rgba(255,107,53,0.05)" },
     progressBar: { width: "100%", height: "8px", backgroundColor: "#333", borderRadius: "4px", overflow: "hidden" },
     progressFill: { height: "100%", backgroundColor: "#ff6b35", borderRadius: "4px", transition: "width 0.3s ease" },
     divider: { display: "flex", alignItems: "center", gap: "12px", margin: "24px 0" },
     dividerLine: { flex: 1, height: "1px", backgroundColor: "#2a2a2a" },
     dividerText: { color: "#444", fontSize: "13px" },
-    linkSection: { marginBottom: "16px" },
-    inputRow: { display: "flex", gap: "8px" },
     urlInput: { flex: 1, padding: "12px 14px", backgroundColor: "#2a2a2a", border: "1px solid #333", borderRadius: "8px", color: "white", fontSize: "14px", outline: "none" },
-    goBtn: { padding: "12px 20px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", whiteSpace: "nowrap" },
+    goBtn: { padding: "12px 20px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "14px", fontWeight: "bold" },
     errorBox: { backgroundColor: "rgba(231,76,60,0.15)", border: "1px solid rgba(231,76,60,0.3)", borderRadius: "8px", padding: "12px 16px", marginBottom: "16px", color: "#e74c3c" },
-    infoBox: { backgroundColor: "#111", borderRadius: "10px", padding: "14px 16px", marginTop: "16px" },
-    infoText: { color: "#555", fontSize: "12px", margin: "0 0 4px 0" },
 };
 
 export default Home;
