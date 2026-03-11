@@ -300,7 +300,8 @@ function Room() {
 
     const startVideoCall = async () => {
         try {
-            const tokenServerUrl = import.meta.env.VITE_TOKEN_SERVER_URL;
+            // Direct URL - ENV variable issue bypass
+            const tokenServerUrl = "https://livekit-token-server-t3ko.onrender.com";
             const response = await fetch(
                 `${tokenServerUrl}/api/token?roomName=room-${roomId}&participantName=${username}`
             );
