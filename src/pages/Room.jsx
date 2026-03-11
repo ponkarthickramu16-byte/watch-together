@@ -23,14 +23,15 @@ const getYouTubeId = (url) => {
     return match ? match[1] : null;
 };
 
-// ✅ Local Video - உன் face உனக்கு தெரியும்
+// ✅ Local Video
 function LocalVideo() {
     const videoRef = useRef(null);
     const { localParticipant } = useLocalParticipant();
     const attachedRef = useRef(false);
 
     useEffect(() => {
-        if (!localParticipant || !videoRef.current) return;
+        if (!localParticipant) return;
+        attachedRef.current = false;
 
         const tryAttach = () => {
             const pub = localParticipant.getTrackPublication("camera");
@@ -44,8 +45,8 @@ function LocalVideo() {
         tryAttach();
         const interval = setInterval(tryAttach, 500);
         setTimeout(() => clearInterval(interval), 10000);
-
         localParticipant.on("localTrackPublished", tryAttach);
+
         return () => {
             clearInterval(interval);
             localParticipant.off("localTrackPublished", tryAttach);
@@ -61,23 +62,16 @@ function LocalVideo() {
     return (
         <div style={{ textAlign: "center" }}>
             <p style={{ color: "#ff6b35", fontSize: "11px", margin: "0 0 4px 0" }}>நீ 🟠</p>
-            <div style={{
-                position: "relative", width: "175px", height: "130px",
-                borderRadius: "10px", overflow: "hidden",
-                border: "2px solid #ff6b35", backgroundColor: "#111",
-            }}>
-                {/* ✅ mirror - உன் face உனக்கு natural-ஆ தெரியும் */}
+            <div style={{ position: "relative", width: "175px", height: "130px", borderRadius: "10px", overflow: "hidden", border: "2px solid #ff6b35", backgroundColor: "#111" }}>
                 <video ref={videoRef} autoPlay muted playsInline
                     style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }} />
-                <div style={{ position: "absolute", bottom: "4px", left: "6px", color: "white", fontSize: "10px", backgroundColor: "rgba(0,0,0,0.6)", padding: "2px 5px", borderRadius: "4px" }}>
-                    நீ 👤
-                </div>
+                <div style={{ position: "absolute", bottom: "4px", left: "6px", color: "white", fontSize: "10px", backgroundColor: "rgba(0,0,0,0.6)", padding: "2px 5px", borderRadius: "4px" }}>நீ 👤</div>
             </div>
         </div>
     );
 }
 
-// ✅ Remote Video - partner face partner-கு தெரியும்
+// ✅ Remote Video
 function RemoteVideo() {
     const videoRef = useRef(null);
     const remoteParticipants = useRemoteParticipants();
@@ -85,7 +79,7 @@ function RemoteVideo() {
     const attachedRef = useRef(false);
 
     useEffect(() => {
-        if (!remoteParticipant || !videoRef.current) return;
+        if (!remoteParticipant) return;
         attachedRef.current = false;
 
         const tryAttach = () => {
@@ -100,7 +94,6 @@ function RemoteVideo() {
         tryAttach();
         const interval = setInterval(tryAttach, 500);
         setTimeout(() => clearInterval(interval), 15000);
-
         remoteParticipant.on("trackSubscribed", tryAttach);
         remoteParticipant.on("trackPublished", tryAttach);
 
@@ -120,21 +113,14 @@ function RemoteVideo() {
     return (
         <div style={{ textAlign: "center" }}>
             <p style={{ color: "#27ae60", fontSize: "11px", margin: "0 0 4px 0" }}>Partner 🟢</p>
-            <div style={{
-                position: "relative", width: "175px", height: "130px",
-                borderRadius: "10px", overflow: "hidden",
-                border: "2px solid #27ae60", backgroundColor: "#111",
-            }}>
+            <div style={{ position: "relative", width: "175px", height: "130px", borderRadius: "10px", overflow: "hidden", border: "2px solid #27ae60", backgroundColor: "#111" }}>
                 {remoteParticipant ? (
-                    // ✅ NO mirror - partner face natural-ஆ தெரியும்
                     <video ref={videoRef} autoPlay playsInline
                         style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 ) : (
                     <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "8px" }}>
                         <span style={{ fontSize: "28px" }}>👤</span>
-                        <span style={{ color: "#555", fontSize: "10px", textAlign: "center", padding: "0 8px" }}>
-                            Partner join பண்ண காத்திருக்கோம்
-                        </span>
+                        <span style={{ color: "#555", fontSize: "10px", textAlign: "center", padding: "0 8px" }}>Partner join பண்ண காத்திருக்கோம்</span>
                     </div>
                 )}
                 {remoteParticipant && (
@@ -147,7 +133,7 @@ function RemoteVideo() {
     );
 }
 
-// ✅ Fullscreen Partner Only - small overlay
+// ✅ Fullscreen Partner Overlay - always fixed top layer
 function FullscreenPartnerOverlay() {
     const videoRef = useRef(null);
     const remoteParticipants = useRemoteParticipants();
@@ -155,7 +141,7 @@ function FullscreenPartnerOverlay() {
     const attachedRef = useRef(false);
 
     useEffect(() => {
-        if (!remoteParticipant || !videoRef.current) return;
+        if (!remoteParticipant) return;
         attachedRef.current = false;
 
         const tryAttach = () => {
@@ -188,20 +174,22 @@ function FullscreenPartnerOverlay() {
 
     return (
         <div style={{
-            position: "fixed", bottom: "20px", right: "20px",
-            width: "160px", height: "120px",
-            borderRadius: "12px", overflow: "hidden",
-            border: "2px solid #27ae60", zIndex: 99999,
-            boxShadow: "0 4px 20px rgba(0,0,0,0.8)",
+            position: "fixed", bottom: "24px", right: "24px",
+            width: "180px", height: "135px",
+            borderRadius: "14px", overflow: "hidden",
+            border: "3px solid #27ae60",
+            zIndex: 2147483647, // max z-index - fullscreen-லயும் தெரியும்
+            boxShadow: "0 4px 24px rgba(0,0,0,0.9)",
             backgroundColor: "#111",
+            pointerEvents: "none", // fullscreen controls block பண்ணாது
         }}>
             <video ref={videoRef} autoPlay playsInline
                 style={{ width: "100%", height: "100%", objectFit: "cover" }} />
             <div style={{
                 position: "absolute", bottom: "4px", left: "6px",
-                color: "white", fontSize: "10px",
-                backgroundColor: "rgba(0,0,0,0.6)",
-                padding: "2px 5px", borderRadius: "4px",
+                color: "white", fontSize: "11px",
+                backgroundColor: "rgba(0,0,0,0.7)",
+                padding: "2px 6px", borderRadius: "4px",
             }}>
                 {remoteParticipant.identity} 💚
             </div>
@@ -210,11 +198,11 @@ function FullscreenPartnerOverlay() {
 }
 
 // ✅ Draggable VideoCallUI
-function VideoCallUI({ onEnd, isFullscreen }) {
+function VideoCallUI({ onEnd }) {
     const { localParticipant } = useLocalParticipant();
     const [isMuted, setIsMuted] = useState(false);
     const [isCamOff, setIsCamOff] = useState(false);
-    const [pos, setPos] = useState({ x: window.innerWidth - 430, y: window.innerHeight - 400 });
+    const [pos, setPos] = useState({ x: window.innerWidth - 430, y: window.innerHeight - 420 });
     const dragging = useRef(false);
     const offset = useRef({ x: 0, y: 0 });
 
@@ -242,45 +230,11 @@ function VideoCallUI({ onEnd, isFullscreen }) {
     }, []);
 
     const toggleMic = async () => {
-        if (localParticipant) {
-            await localParticipant.setMicrophoneEnabled(isMuted);
-            setIsMuted(!isMuted);
-        }
+        if (localParticipant) { await localParticipant.setMicrophoneEnabled(isMuted); setIsMuted(!isMuted); }
     };
     const toggleCam = async () => {
-        if (localParticipant) {
-            await localParticipant.setCameraEnabled(isCamOff);
-            setIsCamOff(!isCamOff);
-        }
+        if (localParticipant) { await localParticipant.setCameraEnabled(isCamOff); setIsCamOff(!isCamOff); }
     };
-
-    // ✅ Fullscreen-ல இருந்தா only partner face small overlay
-    if (isFullscreen) {
-        return (
-            <>
-                <FullscreenPartnerOverlay />
-                {/* Small controls bar */}
-                <div style={{
-                    position: "fixed", bottom: "20px", left: "50%",
-                    transform: "translateX(-50%)",
-                    backgroundColor: "rgba(0,0,0,0.8)",
-                    borderRadius: "30px", padding: "8px 16px",
-                    display: "flex", gap: "10px", zIndex: 99999,
-                    border: "1px solid #333",
-                }}>
-                    <button onClick={toggleMic} style={{ padding: "8px 14px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "12px", backgroundColor: isMuted ? "#e74c3c" : "#2a2a2a" }}>
-                        {isMuted ? "🔇" : "🎤"}
-                    </button>
-                    <button onClick={toggleCam} style={{ padding: "8px 14px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "12px", backgroundColor: isCamOff ? "#e74c3c" : "#2a2a2a" }}>
-                        {isCamOff ? "📷" : "📸"}
-                    </button>
-                    <button onClick={onEnd} style={{ padding: "8px 16px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "12px", backgroundColor: "#e74c3c" }}>
-                        📵 End
-                    </button>
-                </div>
-            </>
-        );
-    }
 
     return (
         <div style={{
@@ -289,7 +243,6 @@ function VideoCallUI({ onEnd, isFullscreen }) {
             border: "2px solid #27ae60", zIndex: 9999, overflow: "hidden",
             boxShadow: "0 8px 32px rgba(0,0,0,0.9)", userSelect: "none",
         }}>
-            {/* Drag Handle */}
             <div
                 onMouseDown={(e) => { dragging.current = true; offset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y }; }}
                 onTouchStart={(e) => { dragging.current = true; offset.current = { x: e.touches[0].clientX - pos.x, y: e.touches[0].clientY - pos.y }; }}
@@ -298,14 +251,10 @@ function VideoCallUI({ onEnd, isFullscreen }) {
                 <span style={{ color: "white", fontSize: "13px", fontWeight: "bold" }}>📹 Video Call</span>
                 <button onClick={onEnd} style={{ padding: "4px 10px", backgroundColor: "#e74c3c", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", fontSize: "12px" }}>📵</button>
             </div>
-
-            {/* Both Videos */}
             <div style={{ padding: "12px", display: "flex", gap: "10px", justifyContent: "center" }}>
                 <LocalVideo />
                 <RemoteVideo />
             </div>
-
-            {/* Controls */}
             <div style={{ padding: "10px 12px", borderTop: "1px solid #333", display: "flex", gap: "8px", justifyContent: "center" }}>
                 <button onClick={toggleMic} style={{ padding: "8px 14px", color: "white", border: "1px solid #444", borderRadius: "8px", cursor: "pointer", fontSize: "12px", fontWeight: "bold", backgroundColor: isMuted ? "#e74c3c" : "#2a2a2a" }}>
                     {isMuted ? "🔇 Muted" : "🎤 Mic On"}
@@ -339,8 +288,6 @@ function Room() {
     const [incomingCall, setIncomingCall] = useState(false);
     const [callStatus, setCallStatus] = useState(null);
     const [callerName, setCallerName] = useState("");
-    // ✅ Fullscreen detection
-    const [isFullscreen, setIsFullscreen] = useState(false);
     const iframeRef = useRef(null);
     const chatEndRef = useRef(null);
     const usernameRef = useRef("");
@@ -348,32 +295,13 @@ function Room() {
     useEffect(() => { usernameRef.current = username; }, [username]);
     useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-    // ✅ Fullscreen change detect
-    useEffect(() => {
-        const onFullscreenChange = () => {
-            setIsFullscreen(!!document.fullscreenElement);
-        };
-        document.addEventListener("fullscreenchange", onFullscreenChange);
-        document.addEventListener("webkitfullscreenchange", onFullscreenChange);
-        return () => {
-            document.removeEventListener("fullscreenchange", onFullscreenChange);
-            document.removeEventListener("webkitfullscreenchange", onFullscreenChange);
-        };
-    }, []);
-
-    // ✅ Mute YouTube when call active
+    // ✅ YouTube mute when call active
     useEffect(() => {
         if (!iframeRef.current) return;
         try {
-            if (showVideoCall) {
-                iframeRef.current.contentWindow.postMessage(
-                    JSON.stringify({ event: "command", func: "mute", args: [] }), "*"
-                );
-            } else {
-                iframeRef.current.contentWindow.postMessage(
-                    JSON.stringify({ event: "command", func: "unMute", args: [] }), "*"
-                );
-            }
+            iframeRef.current.contentWindow.postMessage(
+                JSON.stringify({ event: "command", func: showVideoCall ? "mute" : "unMute", args: [] }), "*"
+            );
         } catch { }
     }, [showVideoCall]);
 
@@ -634,7 +562,7 @@ function Room() {
                 </div>
             )}
 
-            {/* ✅ LiveKit */}
+            {/* ✅ LiveKit - FullscreenPartnerOverlay always renders separately outside iframe */}
             {showVideoCall && livekitToken && (
                 <LiveKitRoom
                     token={livekitToken}
@@ -645,7 +573,10 @@ function Room() {
                     onDisconnected={endVideoCall}
                 >
                     <RoomAudioRenderer />
-                    <VideoCallUI onEnd={endVideoCall} isFullscreen={isFullscreen} />
+                    {/* ✅ Normal popup - drag பண்ணலாம் */}
+                    <VideoCallUI onEnd={endVideoCall} />
+                    {/* ✅ Always visible partner face - fullscreen-லயும் தெரியும் */}
+                    <FullscreenPartnerOverlay />
                 </LiveKitRoom>
             )}
 
