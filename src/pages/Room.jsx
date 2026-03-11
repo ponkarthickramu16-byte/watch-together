@@ -23,35 +23,38 @@ const getYouTubeId = (url) => {
     return match ? match[1] : null;
 };
 
-// ✅ Local Video - localParticipant camera direct attach
+// ✅ Local Video - உன் face உனக்கு தெரியும்
 function LocalVideo() {
     const videoRef = useRef(null);
     const { localParticipant } = useLocalParticipant();
+    const attachedRef = useRef(false);
 
     useEffect(() => {
-        if (!localParticipant) return;
+        if (!localParticipant || !videoRef.current) return;
 
-        const attachVideo = () => {
-            const publication = localParticipant.getTrackPublication("camera");
-            const track = publication?.track;
-            if (track && videoRef.current) {
+        const tryAttach = () => {
+            const pub = localParticipant.getTrackPublication("camera");
+            const track = pub?.videoTrack ?? pub?.track;
+            if (track && videoRef.current && !attachedRef.current) {
                 track.attach(videoRef.current);
+                attachedRef.current = true;
             }
         };
 
-        attachVideo();
-        localParticipant.on("trackPublished", attachVideo);
-        localParticipant.on("trackSubscribed", attachVideo);
+        tryAttach();
+        const interval = setInterval(tryAttach, 500);
+        setTimeout(() => clearInterval(interval), 10000);
 
+        localParticipant.on("localTrackPublished", tryAttach);
         return () => {
-            localParticipant.off("trackPublished", attachVideo);
-            localParticipant.off("trackSubscribed", attachVideo);
+            clearInterval(interval);
+            localParticipant.off("localTrackPublished", tryAttach);
             try {
-                const publication = localParticipant.getTrackPublication("camera");
-                if (publication?.track && videoRef.current) {
-                    publication.track.detach(videoRef.current);
-                }
+                const pub = localParticipant.getTrackPublication("camera");
+                const track = pub?.videoTrack ?? pub?.track;
+                if (track && videoRef.current) track.detach(videoRef.current);
             } catch { }
+            attachedRef.current = false;
         };
     }, [localParticipant?.sid]);
 
@@ -63,6 +66,7 @@ function LocalVideo() {
                 borderRadius: "10px", overflow: "hidden",
                 border: "2px solid #ff6b35", backgroundColor: "#111",
             }}>
+                {/* ✅ mirror - உன் face உனக்கு natural-ஆ தெரியும் */}
                 <video ref={videoRef} autoPlay muted playsInline
                     style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }} />
                 <div style={{ position: "absolute", bottom: "4px", left: "6px", color: "white", fontSize: "10px", backgroundColor: "rgba(0,0,0,0.6)", padding: "2px 5px", borderRadius: "4px" }}>
@@ -73,42 +77,43 @@ function LocalVideo() {
     );
 }
 
-// ✅ Remote Video - remoteParticipant camera + mic direct attach
+// ✅ Remote Video - partner face partner-கு தெரியும்
 function RemoteVideo() {
     const videoRef = useRef(null);
-    const audioRef = useRef(null);
     const remoteParticipants = useRemoteParticipants();
     const remoteParticipant = remoteParticipants[0];
+    const attachedRef = useRef(false);
 
     useEffect(() => {
-        if (!remoteParticipant) return;
+        if (!remoteParticipant || !videoRef.current) return;
+        attachedRef.current = false;
 
-        const attachTracks = () => {
-            // Video
-            const videoPub = remoteParticipant.getTrackPublication("camera");
-            if (videoPub?.track && videoRef.current) {
-                videoPub.track.attach(videoRef.current);
-            }
-            // Audio
-            const audioPub = remoteParticipant.getTrackPublication("microphone");
-            if (audioPub?.track && audioRef.current) {
-                audioPub.track.attach(audioRef.current);
+        const tryAttach = () => {
+            const pub = remoteParticipant.getTrackPublication("camera");
+            const track = pub?.videoTrack ?? pub?.track;
+            if (track && videoRef.current && !attachedRef.current) {
+                track.attach(videoRef.current);
+                attachedRef.current = true;
             }
         };
 
-        attachTracks();
-        remoteParticipant.on("trackSubscribed", attachTracks);
-        remoteParticipant.on("trackPublished", attachTracks);
+        tryAttach();
+        const interval = setInterval(tryAttach, 500);
+        setTimeout(() => clearInterval(interval), 15000);
+
+        remoteParticipant.on("trackSubscribed", tryAttach);
+        remoteParticipant.on("trackPublished", tryAttach);
 
         return () => {
-            remoteParticipant.off("trackSubscribed", attachTracks);
-            remoteParticipant.off("trackPublished", attachTracks);
+            clearInterval(interval);
+            remoteParticipant.off("trackSubscribed", tryAttach);
+            remoteParticipant.off("trackPublished", tryAttach);
             try {
-                const videoPub = remoteParticipant.getTrackPublication("camera");
-                if (videoPub?.track && videoRef.current) videoPub.track.detach(videoRef.current);
-                const audioPub = remoteParticipant.getTrackPublication("microphone");
-                if (audioPub?.track && audioRef.current) audioPub.track.detach(audioRef.current);
+                const pub = remoteParticipant.getTrackPublication("camera");
+                const track = pub?.videoTrack ?? pub?.track;
+                if (track && videoRef.current) track.detach(videoRef.current);
             } catch { }
+            attachedRef.current = false;
         };
     }, [remoteParticipant?.sid]);
 
@@ -121,6 +126,7 @@ function RemoteVideo() {
                 border: "2px solid #27ae60", backgroundColor: "#111",
             }}>
                 {remoteParticipant ? (
+                    // ✅ NO mirror - partner face natural-ஆ தெரியும்
                     <video ref={videoRef} autoPlay playsInline
                         style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 ) : (
@@ -137,14 +143,74 @@ function RemoteVideo() {
                     </div>
                 )}
             </div>
-            {/* ✅ Hidden audio - partner voice கேக்க */}
-            <audio ref={audioRef} autoPlay style={{ display: "none" }} />
+        </div>
+    );
+}
+
+// ✅ Fullscreen Partner Only - small overlay
+function FullscreenPartnerOverlay() {
+    const videoRef = useRef(null);
+    const remoteParticipants = useRemoteParticipants();
+    const remoteParticipant = remoteParticipants[0];
+    const attachedRef = useRef(false);
+
+    useEffect(() => {
+        if (!remoteParticipant || !videoRef.current) return;
+        attachedRef.current = false;
+
+        const tryAttach = () => {
+            const pub = remoteParticipant.getTrackPublication("camera");
+            const track = pub?.videoTrack ?? pub?.track;
+            if (track && videoRef.current && !attachedRef.current) {
+                track.attach(videoRef.current);
+                attachedRef.current = true;
+            }
+        };
+
+        tryAttach();
+        const interval = setInterval(tryAttach, 500);
+        setTimeout(() => clearInterval(interval), 15000);
+        remoteParticipant.on("trackSubscribed", tryAttach);
+
+        return () => {
+            clearInterval(interval);
+            remoteParticipant.off("trackSubscribed", tryAttach);
+            try {
+                const pub = remoteParticipant.getTrackPublication("camera");
+                const track = pub?.videoTrack ?? pub?.track;
+                if (track && videoRef.current) track.detach(videoRef.current);
+            } catch { }
+            attachedRef.current = false;
+        };
+    }, [remoteParticipant?.sid]);
+
+    if (!remoteParticipant) return null;
+
+    return (
+        <div style={{
+            position: "fixed", bottom: "20px", right: "20px",
+            width: "160px", height: "120px",
+            borderRadius: "12px", overflow: "hidden",
+            border: "2px solid #27ae60", zIndex: 99999,
+            boxShadow: "0 4px 20px rgba(0,0,0,0.8)",
+            backgroundColor: "#111",
+        }}>
+            <video ref={videoRef} autoPlay playsInline
+                style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            <div style={{
+                position: "absolute", bottom: "4px", left: "6px",
+                color: "white", fontSize: "10px",
+                backgroundColor: "rgba(0,0,0,0.6)",
+                padding: "2px 5px", borderRadius: "4px",
+            }}>
+                {remoteParticipant.identity} 💚
+            </div>
         </div>
     );
 }
 
 // ✅ Draggable VideoCallUI
-function VideoCallUI({ onEnd }) {
+function VideoCallUI({ onEnd, isFullscreen }) {
     const { localParticipant } = useLocalParticipant();
     const [isMuted, setIsMuted] = useState(false);
     const [isCamOff, setIsCamOff] = useState(false);
@@ -152,10 +218,6 @@ function VideoCallUI({ onEnd }) {
     const dragging = useRef(false);
     const offset = useRef({ x: 0, y: 0 });
 
-    const onMouseDown = (e) => {
-        dragging.current = true;
-        offset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
-    };
     useEffect(() => {
         const onMouseMove = (e) => {
             if (!dragging.current) return;
@@ -192,6 +254,34 @@ function VideoCallUI({ onEnd }) {
         }
     };
 
+    // ✅ Fullscreen-ல இருந்தா only partner face small overlay
+    if (isFullscreen) {
+        return (
+            <>
+                <FullscreenPartnerOverlay />
+                {/* Small controls bar */}
+                <div style={{
+                    position: "fixed", bottom: "20px", left: "50%",
+                    transform: "translateX(-50%)",
+                    backgroundColor: "rgba(0,0,0,0.8)",
+                    borderRadius: "30px", padding: "8px 16px",
+                    display: "flex", gap: "10px", zIndex: 99999,
+                    border: "1px solid #333",
+                }}>
+                    <button onClick={toggleMic} style={{ padding: "8px 14px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "12px", backgroundColor: isMuted ? "#e74c3c" : "#2a2a2a" }}>
+                        {isMuted ? "🔇" : "🎤"}
+                    </button>
+                    <button onClick={toggleCam} style={{ padding: "8px 14px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "12px", backgroundColor: isCamOff ? "#e74c3c" : "#2a2a2a" }}>
+                        {isCamOff ? "📷" : "📸"}
+                    </button>
+                    <button onClick={onEnd} style={{ padding: "8px 16px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "12px", backgroundColor: "#e74c3c" }}>
+                        📵 End
+                    </button>
+                </div>
+            </>
+        );
+    }
+
     return (
         <div style={{
             position: "fixed", left: pos.x, top: pos.y, width: "390px",
@@ -200,18 +290,16 @@ function VideoCallUI({ onEnd }) {
             boxShadow: "0 8px 32px rgba(0,0,0,0.9)", userSelect: "none",
         }}>
             {/* Drag Handle */}
-            <div onMouseDown={onMouseDown}
-                onTouchStart={(e) => {
-                    dragging.current = true;
-                    offset.current = { x: e.touches[0].clientX - pos.x, y: e.touches[0].clientY - pos.y };
-                }}
+            <div
+                onMouseDown={(e) => { dragging.current = true; offset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y }; }}
+                onTouchStart={(e) => { dragging.current = true; offset.current = { x: e.touches[0].clientX - pos.x, y: e.touches[0].clientY - pos.y }; }}
                 style={{ padding: "10px 16px", backgroundColor: "#111", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #333", cursor: "grab" }}>
                 <span style={{ color: "#555", fontSize: "12px" }}>⠿ Drag</span>
                 <span style={{ color: "white", fontSize: "13px", fontWeight: "bold" }}>📹 Video Call</span>
                 <button onClick={onEnd} style={{ padding: "4px 10px", backgroundColor: "#e74c3c", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", fontSize: "12px" }}>📵</button>
             </div>
 
-            {/* Videos */}
+            {/* Both Videos */}
             <div style={{ padding: "12px", display: "flex", gap: "10px", justifyContent: "center" }}>
                 <LocalVideo />
                 <RemoteVideo />
@@ -251,7 +339,8 @@ function Room() {
     const [incomingCall, setIncomingCall] = useState(false);
     const [callStatus, setCallStatus] = useState(null);
     const [callerName, setCallerName] = useState("");
-    // ✅ YouTube iframe mute when call active
+    // ✅ Fullscreen detection
+    const [isFullscreen, setIsFullscreen] = useState(false);
     const iframeRef = useRef(null);
     const chatEndRef = useRef(null);
     const usernameRef = useRef("");
@@ -259,7 +348,20 @@ function Room() {
     useEffect(() => { usernameRef.current = username; }, [username]);
     useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-    // ✅ Mute YouTube when video call is on
+    // ✅ Fullscreen change detect
+    useEffect(() => {
+        const onFullscreenChange = () => {
+            setIsFullscreen(!!document.fullscreenElement);
+        };
+        document.addEventListener("fullscreenchange", onFullscreenChange);
+        document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+        return () => {
+            document.removeEventListener("fullscreenchange", onFullscreenChange);
+            document.removeEventListener("webkitfullscreenchange", onFullscreenChange);
+        };
+    }, []);
+
+    // ✅ Mute YouTube when call active
     useEffect(() => {
         if (!iframeRef.current) return;
         try {
@@ -290,7 +392,7 @@ function Room() {
         return () => unsubscribe();
     }, [roomId, isSyncing]);
 
-    // ✅ Call Status Listener
+    // Call Status Listener
     useEffect(() => {
         if (!roomDocId || !nameSet) return;
         const unsubscribe = onSnapshot(doc(db, "rooms", roomDocId), (snap) => {
@@ -517,7 +619,7 @@ function Room() {
                 )}
             </div>
 
-            {/* ✅ Incoming Call Popup */}
+            {/* Incoming Call Popup */}
             {incomingCall && (
                 <div style={styles.incomingOverlay}>
                     <div style={styles.incomingCard}>
@@ -532,7 +634,7 @@ function Room() {
                 </div>
             )}
 
-            {/* ✅ LiveKit - RoomAudioRenderer automatic audio handle பண்ணும் */}
+            {/* ✅ LiveKit */}
             {showVideoCall && livekitToken && (
                 <LiveKitRoom
                     token={livekitToken}
@@ -542,9 +644,8 @@ function Room() {
                     audio={true}
                     onDisconnected={endVideoCall}
                 >
-                    {/* ✅ This automatically handles ALL remote audio */}
                     <RoomAudioRenderer />
-                    <VideoCallUI onEnd={endVideoCall} />
+                    <VideoCallUI onEnd={endVideoCall} isFullscreen={isFullscreen} />
                 </LiveKitRoom>
             )}
 
