@@ -253,6 +253,7 @@ function Room() {
     const [callStatus, setCallStatus] = useState(null);
     const [callerName, setCallerName] = useState("");
     const [isFullscreen, setIsFullscreen] = useState(false);
+    const [acceptLoading, setAcceptLoading] = useState(false);
 
     const iframeRef = useRef(null);
     const chatEndRef = useRef(null);
@@ -342,10 +343,39 @@ function Room() {
         setTimeout(() => setIsSyncing(false), 1000);
     };
 
+    // ✅ Render.com sleep ஆயிருந்தா wake up பண்ணி retry பண்றோம்
     const fetchToken = async () => {
-        const r = await fetch(`${TOKEN_SERVER}/api/token?roomName=room-${roomId}&participantName=${username}`);
-        const d = await r.json();
-        return d.token;
+        const url = `${TOKEN_SERVER}/api/token?roomName=room-${roomId}&participantName=${username}`;
+
+        // First try - 8 second timeout
+        const fetchWithTimeout = (ms) => {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), ms);
+            return fetch(url, { signal: controller.signal })
+                .finally(() => clearTimeout(timer));
+        };
+
+        try {
+            // முதல் attempt
+            const r = await fetchWithTimeout(8000);
+            if (!r.ok) throw new Error("Server error");
+            const d = await r.json();
+            if (!d.token) throw new Error("No token");
+            return d.token;
+        } catch (e) {
+            // Render sleep ஆயிருந்தா - wake up call பண்ணி 15s wait பண்ணி retry
+            try {
+                await fetch(`${TOKEN_SERVER}/health`).catch(() => { });
+                await new Promise(res => setTimeout(res, 8000));
+                const r2 = await fetchWithTimeout(15000);
+                if (!r2.ok) throw new Error("Server error after retry");
+                const d2 = await r2.json();
+                if (!d2.token) throw new Error("No token after retry");
+                return d2.token;
+            } catch {
+                throw new Error("Token server respond பண்ணல - சில seconds wait பண்ணி மறுபடியும் try பண்ணு");
+            }
+        }
     };
 
     const startVideoCall = async () => {
@@ -364,6 +394,7 @@ function Room() {
 
     const acceptCall = async () => {
         setIncomingCall(false);
+        setAcceptLoading(true);
         setCallStatus("in-call");
         try {
             if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "in-call" });
@@ -372,7 +403,9 @@ function Room() {
             setShowVideoCall(true);
         } catch (err) {
             setCallStatus(null);
-            alert("Call accept ஆகல: " + err.message);
+            alert("❌ Call accept ஆகல: " + err.message);
+        } finally {
+            setAcceptLoading(false);
         }
     };
 
@@ -576,6 +609,23 @@ function Room() {
                 </div>
             )}
 
+            {/* ✅ Accept loading - token fetch ஆகும் வரை காட்டு */}
+            {acceptLoading && (
+                <div style={S.incomingOverlay}>
+                    <div style={{ ...S.incomingCard, animation: "none", border: "2px solid #ff6b35" }}>
+                        <div style={{ fontSize: "48px", marginBottom: "12px" }}>⏳</div>
+                        <p style={{ color: "white", fontSize: "18px", fontWeight: "bold", margin: "0 0 8px 0" }}>
+                            Call connect ஆகுது...
+                        </p>
+                        <p style={{ color: "#aaa", fontSize: "13px", margin: "0 0 20px 0" }}>
+                            சில seconds wait பண்ணு 🙏
+                        </p>
+                        {/* Spinner */}
+                        <div style={{ width: "40px", height: "40px", border: "3px solid #333", borderTop: "3px solid #ff6b35", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto" }} />
+                    </div>
+                </div>
+            )}
+
             {/* ✅ Normal mode LiveKitRoom */}
             {showVideoCall && livekitToken && (
                 <LiveKitRoom
@@ -594,6 +644,7 @@ function Room() {
             <style>{`
                 @keyframes floatUp { 0%{transform:translateY(0) scale(1);opacity:1} 100%{transform:translateY(-300px) scale(1.5);opacity:0} }
                 @keyframes pulse { 0%,100%{box-shadow:0 8px 40px rgba(39,174,96,0.3)} 50%{box-shadow:0 8px 60px rgba(39,174,96,0.6)} }
+                @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
             `}</style>
         </div>
     );
