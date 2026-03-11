@@ -24,7 +24,7 @@ const getYouTubeId = (url) => {
     return match ? match[1] : null;
 };
 
-// ✅ Local Video Only
+// ✅ Local Video
 function LocalVideo() {
     const videoRef = useRef(null);
     const { localParticipant } = useLocalParticipant();
@@ -48,84 +48,142 @@ function LocalVideo() {
         <div style={{ textAlign: "center" }}>
             <p style={{ color: "#ff6b35", fontSize: "11px", margin: "0 0 4px 0" }}>நீ 🟠</p>
             <div style={{
-                position: "relative", width: "180px", height: "135px",
-                borderRadius: "12px", overflow: "hidden",
+                position: "relative", width: "175px", height: "130px",
+                borderRadius: "10px", overflow: "hidden",
                 border: "2px solid #ff6b35", backgroundColor: "#111",
             }}>
                 {tracks[0]?.publication?.track ? (
                     <video ref={videoRef} autoPlay muted playsInline
                         style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }} />
                 ) : (
-                    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
-                        <span style={{ fontSize: "32px" }}>👤</span>
-                        <span style={{ color: "#666", fontSize: "11px" }}>Camera loading...</span>
+                    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "4px" }}>
+                        <span style={{ fontSize: "28px" }}>👤</span>
+                        <span style={{ color: "#666", fontSize: "10px" }}>Loading...</span>
                     </div>
                 )}
-                <div style={{ position: "absolute", bottom: "4px", left: "8px", color: "white", fontSize: "11px", backgroundColor: "rgba(0,0,0,0.6)", padding: "2px 6px", borderRadius: "4px" }}>
-                    நீ 👤
-                </div>
             </div>
         </div>
     );
 }
 
-// ✅ Remote Video Only - useRemoteParticipants use பண்றோம்
+// ✅ Remote Video - Audio auto attach
 function RemoteVideo() {
     const videoRef = useRef(null);
+    const audioRef = useRef(null);
     const remoteParticipants = useRemoteParticipants();
     const remoteParticipant = remoteParticipants[0];
 
-    const tracks = useTracks(
+    const videoTracks = useTracks(
         [{ source: Track.Source.Camera, withPlaceholder: false }],
         { participant: remoteParticipant }
     );
 
+    const audioTracks = useTracks(
+        [{ source: Track.Source.Microphone, withPlaceholder: false }],
+        { participant: remoteParticipant }
+    );
+
+    // Video attach
     useEffect(() => {
         if (!remoteParticipant) return;
-        const track = tracks[0]?.publication?.track;
+        const track = videoTracks[0]?.publication?.track;
         if (track && videoRef.current) track.attach(videoRef.current);
         return () => {
             try {
-                const t = tracks[0]?.publication?.track;
+                const t = videoTracks[0]?.publication?.track;
                 if (t && videoRef.current) t.detach(videoRef.current);
             } catch { }
         };
-    }, [tracks[0]?.publication?.trackSid, remoteParticipant?.sid]);
+    }, [videoTracks[0]?.publication?.trackSid, remoteParticipant?.sid]);
+
+    // ✅ Audio attach - partner voice கேக்க
+    useEffect(() => {
+        if (!remoteParticipant) return;
+        const track = audioTracks[0]?.publication?.track;
+        if (track && audioRef.current) track.attach(audioRef.current);
+        return () => {
+            try {
+                const t = audioTracks[0]?.publication?.track;
+                if (t && audioRef.current) t.detach(audioRef.current);
+            } catch { }
+        };
+    }, [audioTracks[0]?.publication?.trackSid, remoteParticipant?.sid]);
 
     return (
         <div style={{ textAlign: "center" }}>
             <p style={{ color: "#27ae60", fontSize: "11px", margin: "0 0 4px 0" }}>Partner 🟢</p>
             <div style={{
-                position: "relative", width: "180px", height: "135px",
-                borderRadius: "12px", overflow: "hidden",
+                position: "relative", width: "175px", height: "130px",
+                borderRadius: "10px", overflow: "hidden",
                 border: "2px solid #27ae60", backgroundColor: "#111",
             }}>
-                {remoteParticipant && tracks[0]?.publication?.track ? (
+                {remoteParticipant && videoTracks[0]?.publication?.track ? (
                     <video ref={videoRef} autoPlay playsInline
                         style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 ) : (
                     <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "8px" }}>
-                        <span style={{ fontSize: "32px" }}>👤</span>
-                        <span style={{ color: "#555", fontSize: "11px", textAlign: "center", padding: "0 8px" }}>
-                            {remoteParticipant ? "Camera load ஆகுது..." : "Partner join பண்ண காத்திருக்கோம்"}
+                        <span style={{ fontSize: "28px" }}>👤</span>
+                        <span style={{ color: "#555", fontSize: "10px", textAlign: "center", padding: "0 8px" }}>
+                            {remoteParticipant ? "Loading..." : "Partner join பண்ண காத்திருக்கோம்"}
                         </span>
                     </div>
                 )}
                 {remoteParticipant && (
-                    <div style={{ position: "absolute", bottom: "4px", left: "8px", color: "white", fontSize: "11px", backgroundColor: "rgba(0,0,0,0.6)", padding: "2px 6px", borderRadius: "4px" }}>
+                    <div style={{ position: "absolute", bottom: "4px", left: "6px", color: "white", fontSize: "10px", backgroundColor: "rgba(0,0,0,0.6)", padding: "2px 5px", borderRadius: "4px" }}>
                         {remoteParticipant.identity} 👤
                     </div>
                 )}
             </div>
+            {/* ✅ Hidden audio element - partner voice */}
+            <audio ref={audioRef} autoPlay />
         </div>
     );
 }
 
-// ✅ VideoCallUI - Mute + Cam controls
+// ✅ Draggable VideoCallUI
 function VideoCallUI({ onEnd }) {
     const { localParticipant } = useLocalParticipant();
     const [isMuted, setIsMuted] = useState(false);
     const [isCamOff, setIsCamOff] = useState(false);
+    const [pos, setPos] = useState({ x: window.innerWidth - 450, y: window.innerHeight - 380 });
+    const dragging = useRef(false);
+    const offset = useRef({ x: 0, y: 0 });
+
+    const onMouseDown = (e) => {
+        dragging.current = true;
+        offset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
+    };
+
+    const onMouseMove = (e) => {
+        if (!dragging.current) return;
+        setPos({ x: e.clientX - offset.current.x, y: e.clientY - offset.current.y });
+    };
+
+    const onMouseUp = () => { dragging.current = false; };
+
+    // Touch support
+    const onTouchStart = (e) => {
+        dragging.current = true;
+        offset.current = { x: e.touches[0].clientX - pos.x, y: e.touches[0].clientY - pos.y };
+    };
+    const onTouchMove = (e) => {
+        if (!dragging.current) return;
+        setPos({ x: e.touches[0].clientX - offset.current.x, y: e.touches[0].clientY - offset.current.y });
+    };
+    const onTouchEnd = () => { dragging.current = false; };
+
+    useEffect(() => {
+        window.addEventListener("mousemove", onMouseMove);
+        window.addEventListener("mouseup", onMouseUp);
+        window.addEventListener("touchmove", onTouchMove);
+        window.addEventListener("touchend", onTouchEnd);
+        return () => {
+            window.removeEventListener("mousemove", onMouseMove);
+            window.removeEventListener("mouseup", onMouseUp);
+            window.removeEventListener("touchmove", onTouchMove);
+            window.removeEventListener("touchend", onTouchEnd);
+        };
+    }, []);
 
     const toggleMic = async () => {
         if (localParticipant) {
@@ -142,39 +200,62 @@ function VideoCallUI({ onEnd }) {
     };
 
     return (
-        <div style={videoCallStyles.container}>
-            <div style={videoCallStyles.header}>
-                <span style={{ color: "white", fontSize: "14px" }}>📹 Video Call</span>
-                <button onClick={onEnd} style={videoCallStyles.endBtn}>📵 End</button>
+        <div
+            style={{
+                position: "fixed",
+                left: pos.x,
+                top: pos.y,
+                width: "400px",
+                backgroundColor: "#1a1a1a",
+                borderRadius: "16px",
+                border: "2px solid #27ae60",
+                zIndex: 9999,
+                overflow: "hidden",
+                boxShadow: "0 8px 32px rgba(0,0,0,0.9)",
+                userSelect: "none",
+            }}
+        >
+            {/* ✅ Drag Handle */}
+            <div
+                onMouseDown={onMouseDown}
+                onTouchStart={onTouchStart}
+                style={{
+                    padding: "10px 16px", backgroundColor: "#111",
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    borderBottom: "1px solid #333", cursor: "grab",
+                }}
+            >
+                <span style={{ color: "#666", fontSize: "12px" }}>⠿ Drag பண்ணலாம்</span>
+                <span style={{ color: "white", fontSize: "13px" }}>📹 Video Call</span>
+                <button onClick={onEnd} style={{ padding: "4px 10px", backgroundColor: "#e74c3c", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", fontSize: "12px" }}>
+                    📵 End
+                </button>
             </div>
-            <div style={videoCallStyles.videoGrid}>
+
+            {/* Videos */}
+            <div style={{ padding: "12px", display: "flex", gap: "10px", justifyContent: "center" }}>
                 <LocalVideo />
                 <RemoteVideo />
             </div>
-            {/* ✅ Mute / Cam / End Controls */}
-            <div style={videoCallStyles.controls}>
-                <button onClick={toggleMic} style={{ ...videoCallStyles.ctrlBtn, backgroundColor: isMuted ? "#e74c3c" : "#2a2a2a" }}>
+
+            {/* ✅ Controls - Mute / Cam / End */}
+            <div style={{ padding: "10px 12px", borderTop: "1px solid #333", display: "flex", gap: "8px", justifyContent: "center" }}>
+                <button onClick={toggleMic}
+                    style={{ padding: "8px 14px", color: "white", border: "1px solid #444", borderRadius: "8px", cursor: "pointer", fontSize: "12px", fontWeight: "bold", backgroundColor: isMuted ? "#e74c3c" : "#2a2a2a" }}>
                     {isMuted ? "🔇 Muted" : "🎤 Mic On"}
                 </button>
-                <button onClick={toggleCam} style={{ ...videoCallStyles.ctrlBtn, backgroundColor: isCamOff ? "#e74c3c" : "#2a2a2a" }}>
+                <button onClick={toggleCam}
+                    style={{ padding: "8px 14px", color: "white", border: "1px solid #444", borderRadius: "8px", cursor: "pointer", fontSize: "12px", fontWeight: "bold", backgroundColor: isCamOff ? "#e74c3c" : "#2a2a2a" }}>
                     {isCamOff ? "📷 Cam Off" : "📸 Cam On"}
                 </button>
-                <button onClick={onEnd} style={{ ...videoCallStyles.ctrlBtn, backgroundColor: "#e74c3c" }}>
+                <button onClick={onEnd}
+                    style={{ padding: "8px 14px", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "12px", fontWeight: "bold", backgroundColor: "#e74c3c" }}>
                     📵 End
                 </button>
             </div>
         </div>
     );
 }
-
-const videoCallStyles = {
-    container: { position: "fixed", bottom: "80px", right: "20px", width: "420px", backgroundColor: "#1a1a1a", borderRadius: "16px", border: "2px solid #27ae60", zIndex: 999, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.8)" },
-    header: { padding: "10px 16px", backgroundColor: "#111", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #333" },
-    endBtn: { padding: "5px 12px", backgroundColor: "#e74c3c", color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "12px" },
-    videoGrid: { padding: "12px", display: "flex", gap: "12px", justifyContent: "center", alignItems: "flex-start" },
-    controls: { padding: "10px 12px", borderTop: "1px solid #333", display: "flex", gap: "8px", justifyContent: "center" },
-    ctrlBtn: { padding: "8px 14px", color: "white", border: "1px solid #444", borderRadius: "8px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" },
-};
 
 function Room() {
     const { roomId } = useParams();
@@ -447,7 +528,7 @@ function Room() {
                     <div style={styles.incomingCard}>
                         <div style={{ fontSize: "56px", marginBottom: "8px" }}>📹</div>
                         <p style={{ color: "white", fontSize: "20px", fontWeight: "bold", margin: "0 0 8px 0" }}>Incoming Video Call!</p>
-                        <p style={{ color: "#aaa", fontSize: "14px", margin: "0 0 28px 0" }}>{callerName} call பண்றாங்க...</p>
+                        <p style={{ color: "#aaa", fontSize: "14px", margin: "0 0 28px 0" }}>{callerName} call பண்றாங்க... 💕</p>
                         <div style={{ display: "flex", gap: "16px", justifyContent: "center" }}>
                             <button onClick={acceptCall} style={styles.acceptBtn}>✅ Accept</button>
                             <button onClick={rejectCall} style={styles.rejectBtn}>❌ Reject</button>
@@ -456,7 +537,7 @@ function Room() {
                 </div>
             )}
 
-            {/* ✅ LiveKit Video Call */}
+            {/* ✅ LiveKit Video Call - always on top, draggable */}
             {showVideoCall && livekitToken && (
                 <LiveKitRoom
                     token={livekitToken}
@@ -465,6 +546,7 @@ function Room() {
                     video={true}
                     audio={true}
                     onDisconnected={endVideoCall}
+                    style={{ position: "fixed", zIndex: 9999 }}
                 >
                     <VideoCallUI onEnd={endVideoCall} />
                 </LiveKitRoom>
@@ -518,7 +600,7 @@ const styles = {
     msgInput: { flex: 1, padding: "10px 12px", backgroundColor: "#2a2a2a", border: "1px solid #333", borderRadius: "8px", color: "white", fontSize: "14px" },
     sendBtn: { padding: "10px 16px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "16px" },
     incomingOverlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.75)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" },
-    incomingCard: { backgroundColor: "#1a1a1a", borderRadius: "20px", border: "2px solid #27ae60", padding: "40px", textAlign: "center", animation: "pulse 1.5s infinite", boxShadow: "0 8px 40px rgba(39,174,96,0.3)" },
+    incomingCard: { backgroundColor: "#1a1a1a", borderRadius: "20px", border: "2px solid #27ae60", padding: "40px", textAlign: "center", animation: "pulse 1.5s infinite" },
     acceptBtn: { padding: "14px 32px", backgroundColor: "#27ae60", color: "white", border: "none", borderRadius: "12px", fontSize: "16px", cursor: "pointer", fontWeight: "bold" },
     rejectBtn: { padding: "14px 32px", backgroundColor: "#e74c3c", color: "white", border: "none", borderRadius: "12px", fontSize: "16px", cursor: "pointer", fontWeight: "bold" },
 };
