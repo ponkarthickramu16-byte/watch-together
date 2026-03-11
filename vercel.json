@@ -1,32 +1,17 @@
 {
+    "functions": {
+        "api/token.js": {
+            "memory": 512
+        }
+    },
     "rewrites": [
         {
-            "source": "/api/(.*)",
-            "destination": "/api/$1"
+            "source": "/api/token",
+            "destination": "/api/token"
         },
         {
             "source": "/(.*)",
             "destination": "/index.html"
-        }
-    ],
-    "headers": [
-        {
-            "source": "/assets/(.*).js",
-            "headers": [
-                {
-                    "key": "Content-Type",
-                    "value": "application/javascript"
-                }
-            ]
-        },
-        {
-            "source": "/assets/(.*).css",
-            "headers": [
-                {
-                    "key": "Content-Type",
-                    "value": "text/css"
-                }
-            ]
         }
     ]
 }
