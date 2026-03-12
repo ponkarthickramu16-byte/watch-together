@@ -8,9 +8,7 @@ import { uploadToCloudinary } from "../cloudinary";
 const generateRoomId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
 const getYouTubeId = (url) => {
-    const match = url.match(
-        /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/
-    );
+    const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
     return match ? match[1] : null;
 };
 
@@ -41,7 +39,9 @@ function Home({ user }) {
     const [history, setHistory] = useState([]);
     const [historyLoading, setHistoryLoading] = useState(true);
 
-    // ✅ Load watch history for current user
+    // ✅ Room type: "couple" | "group"
+    const [roomType, setRoomType] = useState("couple");
+
     useEffect(() => {
         if (!user?.displayName) return;
         const q = query(
@@ -56,13 +56,21 @@ function Home({ user }) {
         return unsub;
     }, [user?.displayName]);
 
+    // ✅ roomType also saved to Firestore
     const createRoom = async (url, type) => {
         const roomId = generateRoomId();
         await addDoc(collection(db, "rooms"), {
-            roomId, movieUrl: url, movieType: type,
-            isPlaying: false, currentTime: 0, createdAt: new Date(),
+            roomId,
+            movieUrl: url,
+            movieType: type,
+            roomType: roomType,          // "couple" or "group"
+            maxMembers: roomType === "couple" ? 2 : 10,
+            isPlaying: false,
+            currentTime: 0,
+            createdAt: new Date(),
             createdBy: user?.displayName || "Anonymous",
-            callStatus: "idle", callBy: "",
+            callStatus: "idle",
+            callBy: "",
         });
         navigate(`/room/${roomId}`);
     };
@@ -99,7 +107,6 @@ function Home({ user }) {
 
     const handleLogout = async () => { await signOut(auth); };
 
-    // Group by date
     const groupedHistory = history.reduce((acc, item) => {
         const { dateStr, timeStr } = formatDateTime(item.watchedAt);
         const key = dateStr || "Unknown Date";
@@ -107,6 +114,8 @@ function Home({ user }) {
         acc[key].push({ ...item, _time: timeStr });
         return acc;
     }, {});
+
+    const isCouple = roomType === "couple";
 
     return (
         <div style={S.container}>
@@ -123,7 +132,7 @@ function Home({ user }) {
                 </div>
             </div>
 
-            {/* Tabs */}
+            {/* Main Tabs */}
             <div style={S.tabs}>
                 <button onClick={() => setActiveTab("create")}
                     style={{ ...S.tab, ...(activeTab === "create" ? S.tabActive : {}) }}>
@@ -132,24 +141,97 @@ function Home({ user }) {
                 <button onClick={() => setActiveTab("history")}
                     style={{ ...S.tab, ...(activeTab === "history" ? S.tabActive : {}) }}>
                     📜 Watch History
-                    {history.length > 0 && (
-                        <span style={S.badge}>{history.length}</span>
-                    )}
+                    {history.length > 0 && <span style={S.badge}>{history.length}</span>}
                 </button>
             </div>
 
             {/* ===== CREATE ROOM ===== */}
             {activeTab === "create" && (
                 <div style={S.card}>
-                    <h1 style={S.title}>உன் partner-கூட movie பாரு 🍿</h1>
+
+                    {/* ✅ Room Type Selector */}
+                    <div style={{ marginBottom: "24px" }}>
+                        <p style={{ color: "#aaa", fontSize: "13px", textAlign: "center", margin: "0 0 12px 0" }}>
+                            எந்த மாதிரி room வேணும்?
+                        </p>
+                        <div style={{ display: "flex", gap: "10px" }}>
+
+                            {/* Couple */}
+                            <button onClick={() => setRoomType("couple")} style={{
+                                flex: 1, padding: "16px 12px",
+                                backgroundColor: isCouple ? "rgba(255,107,53,0.12)" : "#111",
+                                border: isCouple ? "2px solid #ff6b35" : "2px solid #2a2a2a",
+                                borderRadius: "14px", cursor: "pointer", textAlign: "center",
+                                transition: "all 0.2s",
+                            }}>
+                                <div style={{ fontSize: "32px", marginBottom: "6px" }}>💕</div>
+                                <p style={{ color: isCouple ? "#ff6b35" : "white", fontSize: "15px", fontWeight: "bold", margin: "0 0 4px 0" }}>
+                                    Couple Room
+                                </p>
+                                <p style={{ color: isCouple ? "#ff8c5a" : "#555", fontSize: "12px", margin: 0 }}>
+                                    2 பேர் மட்டும் • Private 🔒
+                                </p>
+                                {isCouple && (
+                                    <div style={{ marginTop: "8px", backgroundColor: "#ff6b35", color: "white", borderRadius: "20px", padding: "2px 10px", fontSize: "11px", fontWeight: "bold", display: "inline-block" }}>
+                                        ✓ Selected
+                                    </div>
+                                )}
+                            </button>
+
+                            {/* Group */}
+                            <button onClick={() => setRoomType("group")} style={{
+                                flex: 1, padding: "16px 12px",
+                                backgroundColor: !isCouple ? "rgba(52,152,219,0.12)" : "#111",
+                                border: !isCouple ? "2px solid #3498db" : "2px solid #2a2a2a",
+                                borderRadius: "14px", cursor: "pointer", textAlign: "center",
+                                transition: "all 0.2s",
+                            }}>
+                                <div style={{ fontSize: "32px", marginBottom: "6px" }}>👯</div>
+                                <p style={{ color: !isCouple ? "#3498db" : "white", fontSize: "15px", fontWeight: "bold", margin: "0 0 4px 0" }}>
+                                    Group Room
+                                </p>
+                                <p style={{ color: !isCouple ? "#5dade2" : "#555", fontSize: "12px", margin: 0 }}>
+                                    4+ பேர் • Friends 🎉
+                                </p>
+                                {!isCouple && (
+                                    <div style={{ marginTop: "8px", backgroundColor: "#3498db", color: "white", borderRadius: "20px", padding: "2px 10px", fontSize: "11px", fontWeight: "bold", display: "inline-block" }}>
+                                        ✓ Selected
+                                    </div>
+                                )}
+                            </button>
+                        </div>
+
+                        {/* Info strip */}
+                        <div style={{ marginTop: "10px", backgroundColor: isCouple ? "rgba(255,107,53,0.07)" : "rgba(52,152,219,0.07)", borderRadius: "10px", padding: "10px 14px", border: `1px solid ${isCouple ? "rgba(255,107,53,0.2)" : "rgba(52,152,219,0.2)"}` }}>
+                            {isCouple ? (
+                                <p style={{ color: "#aaa", fontSize: "12px", margin: 0 }}>
+                                    💕 <strong style={{ color: "#ff6b35" }}>Couple Room:</strong> நீயும் உன் partner-உம் மட்டும். 3rd person join ஆக முடியாது. Super private! 🔐
+                                </p>
+                            ) : (
+                                <p style={{ color: "#aaa", fontSize: "12px", margin: 0 }}>
+                                    👯 <strong style={{ color: "#3498db" }}>Group Room:</strong> Friends எல்லாரும் join ஆகலாம். Link share பண்ணு, கூட்டமா பாரு! 🎊
+                                </p>
+                            )}
+                        </div>
+                    </div>
+
+                    <h1 style={{ ...S.title, color: isCouple ? "white" : "white" }}>
+                        {isCouple ? "💕 Partner-கூட movie பாரு" : "👯 Friends-கூட movie பாரு"}
+                    </h1>
                     <p style={S.subtitle}>Movie upload பண்ணு அல்லது YouTube link போடு</p>
 
+                    {/* Upload area */}
                     {!uploading ? (
                         <label htmlFor="fileInput"
                             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
                             onDragLeave={() => setDragOver(false)}
                             onDrop={handleDrop}
-                            style={{ ...S.uploadArea, borderColor: dragOver ? "#ff6b35" : "#333", backgroundColor: dragOver ? "rgba(255,107,53,0.08)" : "#111", display: "block", cursor: "pointer" }}>
+                            style={{
+                                ...S.uploadArea,
+                                borderColor: dragOver ? (isCouple ? "#ff6b35" : "#3498db") : "#333",
+                                backgroundColor: dragOver ? (isCouple ? "rgba(255,107,53,0.08)" : "rgba(52,152,219,0.08)") : "#111",
+                                display: "block", cursor: "pointer",
+                            }}>
                             <div style={{ fontSize: "48px", marginBottom: "12px" }}>📁</div>
                             <p style={{ color: "white", fontSize: "16px", margin: "0 0 8px 0", fontWeight: "bold" }}>இங்க tap பண்ணி video select பண்ணு</p>
                             <p style={{ color: "#555", fontSize: "13px", margin: "0 0 4px 0" }}>Gallery / Files app-ல இருந்து select பண்ணலாம்</p>
@@ -178,7 +260,10 @@ function Home({ user }) {
                                 onChange={(e) => { setMovieUrl(e.target.value); setError(""); }}
                                 onKeyPress={(e) => e.key === "Enter" && handleYouTubeOrLink()}
                                 style={S.urlInput} />
-                            <button onClick={handleYouTubeOrLink} style={S.goBtn}>▶ Go</button>
+                            <button onClick={handleYouTubeOrLink}
+                                style={{ ...S.goBtn, backgroundColor: isCouple ? "#ff6b35" : "#3498db" }}>
+                                ▶ Go
+                            </button>
                         </div>
                     </div>
 
@@ -188,7 +273,9 @@ function Home({ user }) {
                         <p style={{ color: "#555", fontSize: "12px", margin: "0 0 4px 0" }}>💡 <strong style={{ color: "#666" }}>Tips:</strong></p>
                         <p style={{ color: "#555", fontSize: "12px", margin: "0 0 3px 0" }}>• YouTube link best - fast & unlimited ✅</p>
                         <p style={{ color: "#555", fontSize: "12px", margin: "0 0 3px 0" }}>• File upload max 100MB (personal videos மட்டும்)</p>
-                        <p style={{ color: "#555", fontSize: "12px", margin: 0 }}>• Mobile gallery-இல் இருந்து video select ஆகும் ✅</p>
+                        <p style={{ color: "#555", fontSize: "12px", margin: 0 }}>
+                            {isCouple ? "• Couple Room - 2 பேர் மட்டும் join ஆகலாம் 🔒" : "• Group Room - எத்தனை பேர் வேணும்னாலும் join ஆகலாம் 🎉"}
+                        </p>
                     </div>
                 </div>
             )}
@@ -201,7 +288,6 @@ function Home({ user }) {
                         <span style={{ color: "#555", fontSize: "13px" }}>மொத்தம் {history.length} movies</span>
                     </div>
 
-                    {/* Loading */}
                     {historyLoading && (
                         <div style={{ textAlign: "center", padding: "48px" }}>
                             <div style={{ width: "36px", height: "36px", border: "3px solid #333", borderTop: "3px solid #ff6b35", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 16px" }} />
@@ -209,7 +295,6 @@ function Home({ user }) {
                         </div>
                     )}
 
-                    {/* Empty */}
                     {!historyLoading && history.length === 0 && (
                         <div style={{ textAlign: "center", padding: "48px 20px" }}>
                             <div style={{ fontSize: "64px", marginBottom: "16px" }}>🍿</div>
@@ -222,10 +307,8 @@ function Home({ user }) {
                         </div>
                     )}
 
-                    {/* History grouped by date */}
                     {!historyLoading && Object.entries(groupedHistory).map(([dateStr, items]) => (
                         <div key={dateStr} style={{ marginBottom: "28px" }}>
-                            {/* Date divider */}
                             <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
                                 <div style={{ height: "1px", flex: 1, backgroundColor: "#2a2a2a" }} />
                                 <div style={{ backgroundColor: "#2a2a2a", border: "1px solid #333", borderRadius: "20px", padding: "4px 14px", display: "flex", alignItems: "center", gap: "6px" }}>
@@ -235,15 +318,14 @@ function Home({ user }) {
                                 <div style={{ height: "1px", flex: 1, backgroundColor: "#2a2a2a" }} />
                             </div>
 
-                            {/* Items */}
                             {items.map((item) => {
                                 const ytId = getYouTubeId(item.movieUrl || "");
                                 const title = getMovieTitle(item);
                                 const isYT = item.movieType === "youtube" || !!ytId;
+                                const isCoupleRoom = item.roomType === "couple" || !item.roomType;
 
                                 return (
                                     <div key={item.id} style={S.historyItem}>
-                                        {/* Thumbnail */}
                                         <div style={{ position: "relative", flexShrink: 0 }}>
                                             {ytId ? (
                                                 <div style={{ width: "80px", height: "56px", borderRadius: "8px", overflow: "hidden", border: "1px solid #2a2a2a", backgroundColor: "#111" }}>
@@ -261,29 +343,25 @@ function Home({ user }) {
                                             </span>
                                         </div>
 
-                                        {/* Info */}
                                         <div style={{ flex: 1, minWidth: 0 }}>
-                                            {/* Title */}
-                                            <p style={{ color: "white", fontSize: "14px", fontWeight: "bold", margin: "0 0 6px 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                                {title}
-                                            </p>
-                                            {/* Partner */}
+                                            <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" }}>
+                                                <p style={{ color: "white", fontSize: "14px", fontWeight: "bold", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                                                    {title}
+                                                </p>
+                                                {/* Room type badge */}
+                                                <span style={{ fontSize: "10px", fontWeight: "bold", backgroundColor: isCoupleRoom ? "rgba(255,107,53,0.2)" : "rgba(52,152,219,0.2)", color: isCoupleRoom ? "#ff6b35" : "#3498db", border: `1px solid ${isCoupleRoom ? "rgba(255,107,53,0.4)" : "rgba(52,152,219,0.4)"}`, borderRadius: "10px", padding: "1px 7px", whiteSpace: "nowrap", flexShrink: 0 }}>
+                                                    {isCoupleRoom ? "💕 Couple" : "👯 Group"}
+                                                </span>
+                                            </div>
                                             <div style={{ display: "flex", alignItems: "center", gap: "5px", marginBottom: "5px" }}>
-                                                <span style={{ fontSize: "12px" }}>💕</span>
-                                                <span style={{ color: "#ff6b35", fontSize: "12px", fontWeight: "bold" }}>
+                                                <span style={{ fontSize: "12px" }}>{isCoupleRoom ? "💕" : "👯"}</span>
+                                                <span style={{ color: isCoupleRoom ? "#ff6b35" : "#3498db", fontSize: "12px", fontWeight: "bold" }}>
                                                     {item.partnerName ? `${item.partnerName}-கூட பார்த்தோம்` : "Watch Together"}
                                                 </span>
                                             </div>
-                                            {/* Time + Room */}
                                             <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
-                                                <span style={{ color: "#555", fontSize: "11px", display: "flex", alignItems: "center", gap: "3px" }}>
-                                                    🕐 {item._time}
-                                                </span>
-                                                {item.roomId && (
-                                                    <span style={{ color: "#333", fontSize: "11px", display: "flex", alignItems: "center", gap: "3px" }}>
-                                                        🏠 {item.roomId}
-                                                    </span>
-                                                )}
+                                                <span style={{ color: "#555", fontSize: "11px" }}>🕐 {item._time}</span>
+                                                {item.roomId && <span style={{ color: "#333", fontSize: "11px" }}>🏠 {item.roomId}</span>}
                                             </div>
                                         </div>
                                     </div>
@@ -311,13 +389,13 @@ const S = {
     tabActive: { backgroundColor: "#ff6b35", color: "white", border: "1px solid #ff6b35" },
     badge: { backgroundColor: "rgba(255,255,255,0.25)", color: "white", fontSize: "11px", fontWeight: "bold", padding: "1px 7px", borderRadius: "10px", minWidth: "18px", textAlign: "center" },
     card: { width: "100%", maxWidth: "560px", backgroundColor: "#1a1a1a", borderRadius: "20px", padding: "28px", border: "1px solid #222" },
-    title: { color: "white", fontSize: "22px", margin: "0 0 8px 0", textAlign: "center" },
-    subtitle: { color: "#666", fontSize: "14px", margin: "0 0 24px 0", textAlign: "center" },
-    uploadArea: { border: "2px dashed #333", borderRadius: "14px", padding: "32px 20px", textAlign: "center", transition: "all 0.2s" },
-    progressContainer: { border: "2px solid #ff6b35", borderRadius: "14px", padding: "32px 20px", textAlign: "center", backgroundColor: "rgba(255,107,53,0.05)" },
+    title: { color: "white", fontSize: "20px", margin: "0 0 6px 0", textAlign: "center", fontWeight: "bold" },
+    subtitle: { color: "#666", fontSize: "14px", margin: "0 0 20px 0", textAlign: "center" },
+    uploadArea: { border: "2px dashed #333", borderRadius: "14px", padding: "28px 20px", textAlign: "center", transition: "all 0.2s" },
+    progressContainer: { border: "2px solid #ff6b35", borderRadius: "14px", padding: "28px 20px", textAlign: "center", backgroundColor: "rgba(255,107,53,0.05)" },
     progressBar: { width: "100%", height: "8px", backgroundColor: "#333", borderRadius: "4px", overflow: "hidden" },
     progressFill: { height: "100%", backgroundColor: "#ff6b35", borderRadius: "4px", transition: "width 0.3s ease" },
-    divider: { display: "flex", alignItems: "center", gap: "12px", margin: "24px 0" },
+    divider: { display: "flex", alignItems: "center", gap: "12px", margin: "20px 0" },
     dividerLine: { flex: 1, height: "1px", backgroundColor: "#2a2a2a" },
     dividerText: { color: "#444", fontSize: "13px" },
     urlInput: { flex: 1, padding: "12px 14px", backgroundColor: "#2a2a2a", border: "1px solid #333", borderRadius: "8px", color: "white", fontSize: "14px", outline: "none" },
