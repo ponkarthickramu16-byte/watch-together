@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { db, auth } from "../firebase";
 import { collection, addDoc, query, where, onSnapshot, orderBy } from "firebase/firestore";
@@ -38,41 +38,70 @@ function Home({ user }) {
     const [activeTab, setActiveTab] = useState("create");
     const [history, setHistory] = useState([]);
     const [historyLoading, setHistoryLoading] = useState(true);
-
-    // ✅ Room type: "couple" | "group"
+    const [historyError, setHistoryError] = useState(""); // ✅ Bug fix #2
     const [roomType, setRoomType] = useState("couple");
 
+    // ✅ Bug fix #4 — prevent double-click creating 2 rooms
+    const creatingRef = useRef(false);
+
+    // ✅ Bug fix #2 & #3 — show error if history fails, handle null displayName
     useEffect(() => {
-        if (!user?.displayName) return;
+        const userName = user?.displayName || user?.email || null;
+        if (!userName) {
+            setHistoryLoading(false);
+            return;
+        }
+        setHistoryError("");
         const q = query(
             collection(db, "watchHistory"),
-            where("watchedBy", "==", user.displayName),
+            where("watchedBy", "==", userName),
             orderBy("watchedAt", "desc")
         );
-        const unsub = onSnapshot(q, (snap) => {
-            setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-            setHistoryLoading(false);
-        }, () => setHistoryLoading(false));
+        const unsub = onSnapshot(q,
+            (snap) => {
+                setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                setHistoryLoading(false);
+            },
+            (err) => {
+                console.error("History load error:", err);
+                // Firestore index இல்லன்னா இந்த link-ல create பண்ணலாம்
+                if (err.code === "failed-precondition") {
+                    setHistoryError("index");
+                } else {
+                    setHistoryError("general");
+                }
+                setHistoryLoading(false);
+            }
+        );
         return unsub;
-    }, [user?.displayName]);
+    }, [user?.displayName, user?.email]);
 
-    // ✅ roomType also saved to Firestore
+    // ✅ Bug fix #1 & #4 — await Firestore write, prevent double create
     const createRoom = async (url, type) => {
-        const roomId = generateRoomId();
-        await addDoc(collection(db, "rooms"), {
-            roomId,
-            movieUrl: url,
-            movieType: type,
-            roomType: roomType,          // "couple" or "group"
-            maxMembers: roomType === "couple" ? 2 : 10,
-            isPlaying: false,
-            currentTime: 0,
-            createdAt: new Date(),
-            createdBy: user?.displayName || "Anonymous",
-            callStatus: "idle",
-            callBy: "",
-        });
-        navigate(`/room/${roomId}`);
+        if (creatingRef.current) return; // prevent double click
+        creatingRef.current = true;
+        try {
+            const roomId = generateRoomId();
+            await addDoc(collection(db, "rooms"), {
+                roomId,
+                movieUrl: url,
+                movieType: type,
+                roomType: roomType,
+                maxMembers: roomType === "couple" ? 2 : 10,
+                isPlaying: false,
+                currentTime: 0,
+                createdAt: new Date(),
+                createdBy: user?.displayName || user?.email || "Anonymous",
+                callStatus: "idle",
+                callBy: "",
+                participants: [],
+            });
+            // Navigate only after Firestore write is confirmed ✅
+            navigate(`/room/${roomId}`);
+        } catch (err) {
+            setError("❌ Room create ஆகல: " + err.message);
+            creatingRef.current = false;
+        }
     };
 
     const handleFileUpload = async (file) => {
@@ -89,20 +118,29 @@ function Home({ user }) {
             setError("❌ Upload fail: " + err.message);
         } finally {
             setUploading(false); setUploadProgress(0);
+            creatingRef.current = false;
         }
     };
 
     const handleFileChange = (e) => { const f = e.target.files[0]; if (f) handleFileUpload(f); e.target.value = ""; };
     const handleDrop = (e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFileUpload(f); };
 
+    // ✅ Bug fix #4 — loading state for YouTube/link
+    const [linkLoading, setLinkLoading] = useState(false);
     const handleYouTubeOrLink = async () => {
+        if (linkLoading || creatingRef.current) return;
         const url = movieUrl.trim();
         if (!url) { setError("❌ Link enter பண்ணு"); return; }
-        setError("");
-        const ytId = getYouTubeId(url);
-        if (ytId) await createRoom(url, "youtube");
-        else if (url.startsWith("http")) await createRoom(url, "direct");
-        else setError("❌ Valid YouTube link அல்லது video URL enter பண்ணு");
+        setError(""); setLinkLoading(true);
+        try {
+            const ytId = getYouTubeId(url);
+            if (ytId) await createRoom(url, "youtube");
+            else if (url.startsWith("http")) await createRoom(url, "direct");
+            else setError("❌ Valid YouTube link அல்லது video URL enter பண்ணு");
+        } finally {
+            setLinkLoading(false);
+            creatingRef.current = false;
+        }
     };
 
     const handleLogout = async () => { await signOut(auth); };
@@ -127,7 +165,7 @@ function Home({ user }) {
                         <img src={user.photoURL} alt="avatar"
                             style={{ width: "32px", height: "32px", borderRadius: "50%", border: "2px solid #ff6b35" }} />
                     )}
-                    <span style={S.userName}>{user?.displayName || "User"}</span>
+                    <span style={S.userName}>{user?.displayName || user?.email || "User"}</span>
                     <button onClick={handleLogout} style={S.logoutBtn}>Logout</button>
                 </div>
             </div>
@@ -148,33 +186,24 @@ function Home({ user }) {
             {/* ===== CREATE ROOM ===== */}
             {activeTab === "create" && (
                 <div style={S.card}>
-
-                    {/* ✅ Room Type Selector */}
+                    {/* Room Type Selector */}
                     <div style={{ marginBottom: "24px" }}>
                         <p style={{ color: "#aaa", fontSize: "13px", textAlign: "center", margin: "0 0 12px 0" }}>
                             எந்த மாதிரி room வேணும்?
                         </p>
                         <div style={{ display: "flex", gap: "10px" }}>
-
                             {/* Couple */}
                             <button onClick={() => setRoomType("couple")} style={{
                                 flex: 1, padding: "16px 12px",
                                 backgroundColor: isCouple ? "rgba(255,107,53,0.12)" : "#111",
                                 border: isCouple ? "2px solid #ff6b35" : "2px solid #2a2a2a",
-                                borderRadius: "14px", cursor: "pointer", textAlign: "center",
-                                transition: "all 0.2s",
+                                borderRadius: "14px", cursor: "pointer", textAlign: "center", transition: "all 0.2s",
                             }}>
                                 <div style={{ fontSize: "32px", marginBottom: "6px" }}>💕</div>
-                                <p style={{ color: isCouple ? "#ff6b35" : "white", fontSize: "15px", fontWeight: "bold", margin: "0 0 4px 0" }}>
-                                    Couple Room
-                                </p>
-                                <p style={{ color: isCouple ? "#ff8c5a" : "#555", fontSize: "12px", margin: 0 }}>
-                                    2 பேர் மட்டும் • Private 🔒
-                                </p>
+                                <p style={{ color: isCouple ? "#ff6b35" : "white", fontSize: "15px", fontWeight: "bold", margin: "0 0 4px 0" }}>Couple Room</p>
+                                <p style={{ color: isCouple ? "#ff8c5a" : "#555", fontSize: "12px", margin: 0 }}>2 பேர் மட்டும் • Private 🔒</p>
                                 {isCouple && (
-                                    <div style={{ marginTop: "8px", backgroundColor: "#ff6b35", color: "white", borderRadius: "20px", padding: "2px 10px", fontSize: "11px", fontWeight: "bold", display: "inline-block" }}>
-                                        ✓ Selected
-                                    </div>
+                                    <div style={{ marginTop: "8px", backgroundColor: "#ff6b35", color: "white", borderRadius: "20px", padding: "2px 10px", fontSize: "11px", fontWeight: "bold", display: "inline-block" }}>✓ Selected</div>
                                 )}
                             </button>
 
@@ -183,41 +212,27 @@ function Home({ user }) {
                                 flex: 1, padding: "16px 12px",
                                 backgroundColor: !isCouple ? "rgba(52,152,219,0.12)" : "#111",
                                 border: !isCouple ? "2px solid #3498db" : "2px solid #2a2a2a",
-                                borderRadius: "14px", cursor: "pointer", textAlign: "center",
-                                transition: "all 0.2s",
+                                borderRadius: "14px", cursor: "pointer", textAlign: "center", transition: "all 0.2s",
                             }}>
                                 <div style={{ fontSize: "32px", marginBottom: "6px" }}>👯</div>
-                                <p style={{ color: !isCouple ? "#3498db" : "white", fontSize: "15px", fontWeight: "bold", margin: "0 0 4px 0" }}>
-                                    Group Room
-                                </p>
-                                <p style={{ color: !isCouple ? "#5dade2" : "#555", fontSize: "12px", margin: 0 }}>
-                                    4+ பேர் • Friends 🎉
-                                </p>
+                                <p style={{ color: !isCouple ? "#3498db" : "white", fontSize: "15px", fontWeight: "bold", margin: "0 0 4px 0" }}>Group Room</p>
+                                <p style={{ color: !isCouple ? "#5dade2" : "#555", fontSize: "12px", margin: 0 }}>4+ பேர் • Friends 🎉</p>
                                 {!isCouple && (
-                                    <div style={{ marginTop: "8px", backgroundColor: "#3498db", color: "white", borderRadius: "20px", padding: "2px 10px", fontSize: "11px", fontWeight: "bold", display: "inline-block" }}>
-                                        ✓ Selected
-                                    </div>
+                                    <div style={{ marginTop: "8px", backgroundColor: "#3498db", color: "white", borderRadius: "20px", padding: "2px 10px", fontSize: "11px", fontWeight: "bold", display: "inline-block" }}>✓ Selected</div>
                                 )}
                             </button>
                         </div>
 
-                        {/* Info strip */}
                         <div style={{ marginTop: "10px", backgroundColor: isCouple ? "rgba(255,107,53,0.07)" : "rgba(52,152,219,0.07)", borderRadius: "10px", padding: "10px 14px", border: `1px solid ${isCouple ? "rgba(255,107,53,0.2)" : "rgba(52,152,219,0.2)"}` }}>
                             {isCouple ? (
-                                <p style={{ color: "#aaa", fontSize: "12px", margin: 0 }}>
-                                    💕 <strong style={{ color: "#ff6b35" }}>Couple Room:</strong> நீயும் உன் partner-உம் மட்டும். 3rd person join ஆக முடியாது. Super private! 🔐
-                                </p>
+                                <p style={{ color: "#aaa", fontSize: "12px", margin: 0 }}>💕 <strong style={{ color: "#ff6b35" }}>Couple Room:</strong> நீயும் உன் partner-உம் மட்டும். 3rd person join ஆக முடியாது. Super private! 🔐</p>
                             ) : (
-                                <p style={{ color: "#aaa", fontSize: "12px", margin: 0 }}>
-                                    👯 <strong style={{ color: "#3498db" }}>Group Room:</strong> Friends எல்லாரும் join ஆகலாம். Link share பண்ணு, கூட்டமா பாரு! 🎊
-                                </p>
+                                <p style={{ color: "#aaa", fontSize: "12px", margin: 0 }}>👯 <strong style={{ color: "#3498db" }}>Group Room:</strong> Friends எல்லாரும் join ஆகலாம். Link share பண்ணு, கூட்டமா பாரு! 🎊</p>
                             )}
                         </div>
                     </div>
 
-                    <h1 style={{ ...S.title, color: isCouple ? "white" : "white" }}>
-                        {isCouple ? "💕 Partner-கூட movie பாரு" : "👯 Friends-கூட movie பாரு"}
-                    </h1>
+                    <h1 style={S.title}>{isCouple ? "💕 Partner-கூட movie பாரு" : "👯 Friends-கூட movie பாரு"}</h1>
                     <p style={S.subtitle}>Movie upload பண்ணு அல்லது YouTube link போடு</p>
 
                     {/* Upload area */}
@@ -260,9 +275,10 @@ function Home({ user }) {
                                 onChange={(e) => { setMovieUrl(e.target.value); setError(""); }}
                                 onKeyPress={(e) => e.key === "Enter" && handleYouTubeOrLink()}
                                 style={S.urlInput} />
-                            <button onClick={handleYouTubeOrLink}
-                                style={{ ...S.goBtn, backgroundColor: isCouple ? "#ff6b35" : "#3498db" }}>
-                                ▶ Go
+                            {/* ✅ Bug fix #4 — disabled during loading */}
+                            <button onClick={handleYouTubeOrLink} disabled={linkLoading || uploading}
+                                style={{ ...S.goBtn, backgroundColor: linkLoading ? "#555" : isCouple ? "#ff6b35" : "#3498db", cursor: linkLoading ? "not-allowed" : "pointer" }}>
+                                {linkLoading ? "⏳" : "▶ Go"}
                             </button>
                         </div>
                     </div>
@@ -288,6 +304,26 @@ function Home({ user }) {
                         <span style={{ color: "#555", fontSize: "13px" }}>மொத்தம் {history.length} movies</span>
                     </div>
 
+                    {/* ✅ Bug fix #2 — show index error with fix link */}
+                    {historyError === "index" && (
+                        <div style={{ backgroundColor: "rgba(243,156,18,0.15)", border: "1px solid rgba(243,156,18,0.3)", borderRadius: "10px", padding: "14px", marginBottom: "16px" }}>
+                            <p style={{ color: "#f39c12", fontSize: "13px", margin: "0 0 8px 0", fontWeight: "bold" }}>⚠️ Firestore Index வேணும்!</p>
+                            <p style={{ color: "#aaa", fontSize: "12px", margin: "0 0 10px 0" }}>Firebase Console-ல index create பண்ணணும்:</p>
+                            <a href="https://console.firebase.google.com/project/watch-together-948fc/firestore/indexes"
+                                target="_blank" rel="noreferrer"
+                                style={{ color: "#f39c12", fontSize: "12px" }}>
+                                🔗 Firebase Console → Indexes → Add index
+                            </a>
+                            <p style={{ color: "#666", fontSize: "11px", margin: "8px 0 0 0" }}>Collection: watchHistory | Fields: watchedBy (Asc) + watchedAt (Desc)</p>
+                        </div>
+                    )}
+
+                    {historyError === "general" && (
+                        <div style={{ backgroundColor: "rgba(231,76,60,0.15)", border: "1px solid rgba(231,76,60,0.3)", borderRadius: "10px", padding: "14px", marginBottom: "16px" }}>
+                            <p style={{ color: "#e74c3c", fontSize: "13px", margin: 0 }}>❌ History load ஆகல. Refresh பண்ணி try பண்ணு.</p>
+                        </div>
+                    )}
+
                     {historyLoading && (
                         <div style={{ textAlign: "center", padding: "48px" }}>
                             <div style={{ width: "36px", height: "36px", border: "3px solid #333", borderTop: "3px solid #ff6b35", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 16px" }} />
@@ -295,7 +331,7 @@ function Home({ user }) {
                         </div>
                     )}
 
-                    {!historyLoading && history.length === 0 && (
+                    {!historyLoading && !historyError && history.length === 0 && (
                         <div style={{ textAlign: "center", padding: "48px 20px" }}>
                             <div style={{ fontSize: "64px", marginBottom: "16px" }}>🍿</div>
                             <p style={{ color: "white", fontSize: "17px", fontWeight: "bold", margin: "0 0 8px 0" }}>இன்னும் எந்த movie-உம் பார்க்கல!</p>
@@ -334,9 +370,7 @@ function Home({ user }) {
                                                         onError={(e) => { e.target.parentElement.innerHTML = '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:24px">▶️</div>'; }} />
                                                 </div>
                                             ) : (
-                                                <div style={{ width: "80px", height: "56px", borderRadius: "8px", backgroundColor: "#2a2a2a", border: "1px solid #333", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px" }}>
-                                                    🎞️
-                                                </div>
+                                                <div style={{ width: "80px", height: "56px", borderRadius: "8px", backgroundColor: "#2a2a2a", border: "1px solid #333", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px" }}>🎞️</div>
                                             )}
                                             <span style={{ position: "absolute", bottom: "3px", right: "3px", fontSize: "9px", fontWeight: "bold", backgroundColor: isYT ? "#e74c3c" : "#2980b9", color: "white", padding: "1px 5px", borderRadius: "4px" }}>
                                                 {isYT ? "YT" : "FILE"}
@@ -348,7 +382,6 @@ function Home({ user }) {
                                                 <p style={{ color: "white", fontSize: "14px", fontWeight: "bold", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
                                                     {title}
                                                 </p>
-                                                {/* Room type badge */}
                                                 <span style={{ fontSize: "10px", fontWeight: "bold", backgroundColor: isCoupleRoom ? "rgba(255,107,53,0.2)" : "rgba(52,152,219,0.2)", color: isCoupleRoom ? "#ff6b35" : "#3498db", border: `1px solid ${isCoupleRoom ? "rgba(255,107,53,0.4)" : "rgba(52,152,219,0.4)"}`, borderRadius: "10px", padding: "1px 7px", whiteSpace: "nowrap", flexShrink: 0 }}>
                                                     {isCoupleRoom ? "💕 Couple" : "👯 Group"}
                                                 </span>

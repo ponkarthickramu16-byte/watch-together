@@ -295,7 +295,8 @@ function FullscreenFaceBar({ onEnd, isMuted, isCamOff, onToggleMic, onToggleCam 
 }
 
 function NormalCallPopup({ onEnd, isMuted, isCamOff, onToggleMic, onToggleCam }) {
-    const [pos, setPos] = useState({ x: window.innerWidth - 430, y: window.innerHeight - 420 });
+    // ✅ Bug fix 5: safe initial position - don't rely on window.innerWidth at render
+    const [pos, setPos] = useState({ x: 20, y: 60 });
     const dragging = useRef(false); const offset = useRef({ x: 0, y: 0 });
     useEffect(() => {
         const onMM = (e) => { if (!dragging.current) return; setPos({ x: e.clientX - offset.current.x, y: e.clientY - offset.current.y }); };
@@ -339,9 +340,13 @@ function CallUI({ isFullscreen, onEnd }) {
 function WatchHistoryModal({ roomId, onClose, T }) {
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [err, setErr] = useState(false); // ✅ Bug fix 8
     useEffect(() => {
         const q = query(collection(db, "watchHistory"), where("roomId", "==", roomId), orderBy("watchedAt", "desc"));
-        return onSnapshot(q, (snap) => { setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); });
+        return onSnapshot(q,
+            (snap) => { setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); },
+            () => { setErr(true); setLoading(false); } // ✅ Bug fix 8: handle error
+        );
     }, [roomId]);
     return (
         <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.8)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -352,7 +357,9 @@ function WatchHistoryModal({ roomId, onClose, T }) {
                 </div>
                 <div style={{ overflowY: "auto", flex: 1, padding: "12px" }}>
                     {loading && <p style={{ color: T.text2, textAlign: "center", padding: "20px" }}>⏳ Load ஆகுது...</p>}
-                    {!loading && history.length === 0 && <p style={{ color: T.text3, textAlign: "center", padding: "20px" }}>இன்னும் எந்த movie-உம் பார்க்கல 🍿</p>}
+                    {/* ✅ Bug fix 8: show error */}
+                    {err && <p style={{ color: "#e74c3c", textAlign: "center", padding: "20px", fontSize: "13px" }}>❌ History load ஆகல. Firestore index check பண்ணு.</p>}
+                    {!loading && !err && history.length === 0 && <p style={{ color: T.text3, textAlign: "center", padding: "20px" }}>இன்னும் எந்த movie-உம் பார்க்கல 🍿</p>}
                     {history.map(h => (
                         <div key={h.id} style={{ backgroundColor: T.card2, borderRadius: "10px", padding: "12px 16px", marginBottom: "8px", display: "flex", alignItems: "center", gap: "12px" }}>
                             <span style={{ fontSize: "28px" }}>{h.movieType === "youtube" ? "▶️" : "🎞️"}</span>
@@ -377,6 +384,7 @@ function Room() {
     const [isPlaying, setIsPlaying] = useState(false);
     const [copied, setCopied] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
+    const isSyncingRef = useRef(false); // ✅ Bug fix 1: ref for stale closure in onSnapshot
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState("");
     const [username, setUsername] = useState("");
@@ -435,10 +443,24 @@ function Room() {
         return () => window.removeEventListener("keydown", fn);
     }, []);
 
+    // ✅ Bug fix 7: YouTube - use postMessage for play/pause, keep src stable (no reload)
+    const ytSrcRef = useRef(null);
+    const getYouTubeSrc = (id) => {
+        if (!ytSrcRef.current) {
+            ytSrcRef.current = `https://www.youtube.com/embed/${id}?autoplay=1&controls=1&enablejsapi=1&origin=${window.location.origin}&rel=0`;
+        }
+        return ytSrcRef.current;
+    };
+
     useEffect(() => {
-        if (!iframeRef.current) return;
-        try { iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: "command", func: showVideoCall ? "mute" : "unMute", args: [] }), "*"); } catch { }
-    }, [showVideoCall]);
+        if (!iframeRef.current || !roomData?.movieUrl) return;
+        const ytId = getYouTubeId(roomData.movieUrl);
+        if (!ytId) return;
+        try {
+            const func = isPlaying ? "playVideo" : "pauseVideo";
+            iframeRef.current.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args: [] }), "*");
+        } catch { }
+    }, [isPlaying, roomData?.movieUrl]);
 
     // Room sync
     useEffect(() => {
@@ -449,12 +471,12 @@ function Room() {
                 setRoomDocId(docData.id);
                 const data = docData.data();
                 setRoomData(data);
-                if (!isSyncing) setIsPlaying(data.isPlaying);
+                if (!isSyncingRef.current) setIsPlaying(data.isPlaying); // ✅ Bug fix 1: use ref
                 if (videoRef.current && data.currentTime !== undefined && !isSyncingSeekRef.current) {
                     const diff = Math.abs(videoRef.current.currentTime - data.currentTime);
                     if (diff > 2) videoRef.current.currentTime = data.currentTime;
                 }
-                if (videoRef.current && !isSyncing) {
+                if (videoRef.current && !isSyncingRef.current) { // ✅ Bug fix 1
                     if (data.isPlaying && videoRef.current.paused) videoRef.current.play().catch(() => { });
                     else if (!data.isPlaying && !videoRef.current.paused) videoRef.current.pause();
                 }
@@ -469,7 +491,16 @@ function Room() {
             const data = snap.data(); if (!data) return;
             const me = usernameRef.current;
             if (data.callStatus === "calling" && data.callBy !== me) { setCallerName(data.callBy || "Partner"); setIncomingCall(true); }
-            if (data.callStatus === "ended" && data.callBy !== me) { setIncomingCall(false); setCallStatus(null); setShowVideoCall(false); setLivekitToken(null); }
+            // ✅ Bug fix 3: ended state should reset for everyone, not just one side
+            if (data.callStatus === "idle" || data.callStatus === "ended") {
+                setIncomingCall(false);
+                // Only reset if we're not the one who ended (avoid self-trigger)
+                if (data.callBy !== me) {
+                    setCallStatus(null);
+                    setShowVideoCall(false);
+                    setLivekitToken(null);
+                }
+            }
             if (data.participants && Array.isArray(data.participants)) {
                 const prev = prevParticipantsRef.current;
                 const newOnes = data.participants.filter(p => p !== me && !prev.includes(p));
@@ -536,21 +567,23 @@ function Room() {
         } catch { }
     }, [roomId]);
 
+    // ✅ Bug fix 2: log only once per room session, never reset on pause
     useEffect(() => {
         if (isPlaying && roomDocId && roomData?.movieUrl && username && !historyLoggedRef.current) {
             historyLoggedRef.current = true;
             saveWatchHistory(roomDocId, roomData, username);
         }
-        if (!isPlaying) historyLoggedRef.current = false;
+        // Removed: if (!isPlaying) historyLoggedRef.current = false — was causing duplicate logs
     }, [isPlaying, roomDocId, roomData, username, saveWatchHistory]);
 
     const updatePlayState = async (playing, time) => {
         if (!roomDocId) return;
+        isSyncingRef.current = true; // ✅ Bug fix 1
         setIsSyncing(true);
         const update = { isPlaying: playing };
         if (time !== undefined) update.currentTime = time;
         await updateDoc(doc(db, "rooms", roomDocId), update);
-        setTimeout(() => setIsSyncing(false), 1000);
+        setTimeout(() => { isSyncingRef.current = false; setIsSyncing(false); }, 1000);
     };
 
     const handleSeek = async () => {
@@ -560,10 +593,15 @@ function Room() {
         setTimeout(() => { isSyncingSeekRef.current = false; }, 1500);
     };
 
+    const typingWriteRef = useRef(null); // ✅ Bug fix 4
     const handleTyping = async (e) => {
         setNewMessage(e.target.value);
         if (!roomDocId) return;
-        await updateDoc(doc(db, "rooms", roomDocId), { typing: username }).catch(() => { });
+        // ✅ Bug fix 4: debounce Firestore write - don't write on every keystroke
+        clearTimeout(typingWriteRef.current);
+        typingWriteRef.current = setTimeout(async () => {
+            await updateDoc(doc(db, "rooms", roomDocId), { typing: username }).catch(() => { });
+        }, 300);
         clearTimeout(typingTimeoutRef.current);
         typingTimeoutRef.current = setTimeout(async () => {
             await updateDoc(doc(db, "rooms", roomDocId), { typing: "" }).catch(() => { });
@@ -680,8 +718,9 @@ function Room() {
         <>
             {youtubeId ? (
                 <div style={{ width: "100%", height: "100%", position: "relative" }}>
+                    {/* ✅ Bug fix 7: stable src - no reload on play/pause, controlled via postMessage */}
                     <iframe ref={iframeRef}
-                        src={`https://www.youtube.com/embed/${youtubeId}?autoplay=${isPlaying ? 1 : 0}&controls=1&enablejsapi=1&origin=${window.location.origin}&rel=0`}
+                        src={getYouTubeSrc(youtubeId)}
                         style={{ width: "100%", height: "100%", border: "none" }}
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
                     <div style={{ position: "absolute", bottom: "16px", left: "50%", transform: "translateX(-50%)", zIndex: 10 }}>
