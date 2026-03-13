@@ -7,14 +7,14 @@
       "schedule": "0 18 * * *"
     }
   ],
-  "routes": [
+  "rewrites": [
     {
-      "src": "/api/(.*)",
-      "dest": "/api/$1"
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
     },
     {
-      "src": "/(.*)",
-      "dest": "/index.html"
+      "source": "/((?!assets|favicon|manifest|icons).*)",
+      "destination": "/index.html"
     }
   ]
 }
