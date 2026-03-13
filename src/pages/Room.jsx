@@ -280,7 +280,7 @@ function RemoteVideo({ small }) {
     );
 }
 
-// ✅ Fullscreen face bar - position:fixed so it renders over fullscreen video from anywhere in DOM
+// ✅ Fullscreen face bar - position:fixed, zIndex above fullscreen overlay (9000)
 function FullscreenFaceBar({ onEnd, isMuted, isCamOff, onToggleMic, onToggleCam }) {
     return (
         <div style={{ position: "fixed", bottom: "24px", right: "24px", display: "flex", flexDirection: "column", gap: "8px", zIndex: 9999, alignItems: "flex-end" }}>
@@ -742,40 +742,38 @@ function Room() {
         </>
     );
 
-    if (isFullscreen) {
-        return (
-            <div style={{ position: "fixed", inset: 0, backgroundColor: "#000", zIndex: 9000 }}>
-                <Toast toasts={toasts} />
-                <div style={{ width: "100%", height: "100%", position: "relative" }}>
-                    {VideoPlayer}
-                    <button onClick={() => setIsFullscreen(false)}
-                        style={{ position: "absolute", top: "16px", left: "16px", padding: "8px 16px", backgroundColor: "rgba(0,0,0,0.75)", color: "white", border: "1px solid #555", borderRadius: "8px", cursor: "pointer", fontSize: "13px", zIndex: 9100 }}>
-                        ✕ Exit
-                    </button>
-                    <div style={{ position: "absolute", bottom: "20px", left: "20px", display: "flex", gap: "8px", zIndex: 9100 }}>
-                        {REACTIONS.map((emoji) => (
-                            <button key={emoji} onClick={() => sendReaction(emoji)}
-                                style={{ fontSize: "24px", backgroundColor: "rgba(0,0,0,0.5)", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>{emoji}</button>
-                        ))}
-                    </div>
-                    {/* ✅ Fix: LiveKitRoom is rendered once below - CallUI portal renders here via isFullscreen prop */}
-                    {!showVideoCall && (
-                        <div style={{ position: "absolute", bottom: "24px", right: "24px", zIndex: 9100 }}>
-                            <button onClick={startVideoCall}
-                                style={{ padding: "10px 18px", backgroundColor: "#27ae60", color: "white", border: "none", borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "bold" }}>
-                                📹 Face Cam Start
-                            </button>
-                        </div>
-                    )}
-                </div>
-            </div>
-        );
-    }
-
     return (
         <div style={{ backgroundColor: T.bg, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
             <Toast toasts={toasts} />
             {showHistory && <WatchHistoryModal roomId={roomId} onClose={() => setShowHistory(false)} T={T} />}
+
+            {/* ✅ FULLSCREEN OVERLAY - same tree, no unmount! */}
+            {isFullscreen && (
+                <div style={{ position: "fixed", inset: 0, backgroundColor: "#000", zIndex: 9000 }}>
+                    <div style={{ width: "100%", height: "100%", position: "relative" }}>
+                        {VideoPlayer}
+                        <button onClick={() => setIsFullscreen(false)}
+                            style={{ position: "absolute", top: "16px", left: "16px", padding: "8px 16px", backgroundColor: "rgba(0,0,0,0.75)", color: "white", border: "1px solid #555", borderRadius: "8px", cursor: "pointer", fontSize: "13px", zIndex: 9100 }}>
+                            ✕ Exit
+                        </button>
+                        <div style={{ position: "absolute", bottom: "20px", left: "20px", display: "flex", gap: "8px", zIndex: 9100 }}>
+                            {REACTIONS.map((emoji) => (
+                                <button key={emoji} onClick={() => sendReaction(emoji)}
+                                    style={{ fontSize: "24px", backgroundColor: "rgba(0,0,0,0.5)", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>{emoji}</button>
+                            ))}
+                        </div>
+                        {/* Face cam handled by CallUI (LiveKitRoom context) below */}
+                        {!showVideoCall && (
+                            <div style={{ position: "absolute", bottom: "24px", right: "24px", zIndex: 9100 }}>
+                                <button onClick={startVideoCall}
+                                    style={{ padding: "10px 18px", backgroundColor: "#27ae60", color: "white", border: "none", borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "bold" }}>
+                                    📹 Face Cam Start
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
 
             <div style={{ display: "flex", flex: 1, height: "100vh" }}>
                 <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
@@ -926,11 +924,11 @@ function Room() {
                 </div>
             )}
 
-            {/* ✅ Fix: LiveKitRoom ALWAYS rendered once when call is active - no disconnect on fullscreen toggle */}
+            {/* ✅ LiveKitRoom renders ONCE - never unmounts on fullscreen toggle */}
             {showVideoCall && livekitToken && (
                 <LiveKitRoom token={livekitToken} serverUrl={import.meta.env.VITE_LIVEKIT_URL} connect={true} video={true} audio={true} onDisconnected={endVideoCall}>
                     <RoomAudioRenderer />
-                    {/* CallUI switches between fullscreen overlay and normal popup based on isFullscreen */}
+                    {/* CallUI always renders - it handles both normal popup and fullscreen overlay internally */}
                     <CallUI isFullscreen={isFullscreen} onEnd={endVideoCall} />
                 </LiveKitRoom>
             )}
