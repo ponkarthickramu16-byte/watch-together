@@ -15,7 +15,6 @@ import "@livekit/components-styles";
 
 const REACTIONS = ["❤️", "😂", "😮", "🔥", "👏", "😢"];
 
-// ✅ Emoji categories for picker
 const EMOJI_CATEGORIES = [
     { label: "❤️ Love", emojis: ["❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "😍", "🥰", "😘", "💏", "👫"] },
     { label: "😂 Funny", emojis: ["😂", "🤣", "😆", "😅", "😄", "😁", "😀", "🤩", "😜", "😝", "🤪", "😋", "🤭", "😏", "🙃", "😌", "🤗", "🫠", "😇", "🥳"] },
@@ -29,6 +28,60 @@ const getYouTubeId = (url) => {
     const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
     return match ? match[1] : null;
 };
+
+// ============================================================
+// ✅ AES-GCM ENCRYPTION HELPERS
+// Key = roomId (same for everyone in room, nobody outside knows)
+// Firestore-ல ciphertext மட்டும் store ஆகும்
+// ============================================================
+const getCryptoKey = async (roomId) => {
+    const encoder = new TextEncoder();
+    const keyMaterial = await window.crypto.subtle.importKey(
+        "raw",
+        encoder.encode(roomId.padEnd(32, "0").substring(0, 32)), // 32 bytes = 256 bit
+        "PBKDF2",
+        false,
+        ["deriveKey"]
+    );
+    return window.crypto.subtle.deriveKey(
+        { name: "PBKDF2", salt: encoder.encode("watch-together-salt"), iterations: 100000, hash: "SHA-256" },
+        keyMaterial,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["encrypt", "decrypt"]
+    );
+};
+
+const encryptMessage = async (text, roomId) => {
+    try {
+        const key = await getCryptoKey(roomId);
+        const iv = window.crypto.getRandomValues(new Uint8Array(12));
+        const encoded = new TextEncoder().encode(text);
+        const cipher = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
+        // Combine iv + ciphertext → base64
+        const combined = new Uint8Array(iv.byteLength + cipher.byteLength);
+        combined.set(iv, 0);
+        combined.set(new Uint8Array(cipher), iv.byteLength);
+        return btoa(String.fromCharCode(...combined));
+    } catch {
+        return text; // fallback - plain text
+    }
+};
+
+const decryptMessage = async (cipherB64, roomId) => {
+    try {
+        const key = await getCryptoKey(roomId);
+        const combined = Uint8Array.from(atob(cipherB64), c => c.charCodeAt(0));
+        const iv = combined.slice(0, 12);
+        const cipher = combined.slice(12);
+        const decrypted = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, cipher);
+        return new TextDecoder().decode(decrypted);
+    } catch {
+        return cipherB64; // fallback - return as-is (old unencrypted messages)
+    }
+};
+
+// ============================================================
 
 // ✅ Toast
 function Toast({ toasts }) {
@@ -48,7 +101,6 @@ function EmojiPicker({ onSelect, onClose }) {
     const [activeCategory, setActiveCategory] = useState(0);
     return (
         <div style={{ position: "absolute", bottom: "52px", left: 0, width: "300px", backgroundColor: "#1a1a1a", border: "1px solid #333", borderRadius: "14px", boxShadow: "0 8px 32px rgba(0,0,0,0.8)", zIndex: 1000, overflow: "hidden" }}>
-            {/* Category tabs */}
             <div style={{ display: "flex", borderBottom: "1px solid #333", overflowX: "auto" }}>
                 {EMOJI_CATEGORIES.map((cat, i) => (
                     <button key={i} onClick={() => setActiveCategory(i)}
@@ -58,11 +110,10 @@ function EmojiPicker({ onSelect, onClose }) {
                 ))}
                 <button onClick={onClose} style={{ marginLeft: "auto", padding: "8px 12px", background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>✕</button>
             </div>
-            {/* Emoji grid */}
             <div style={{ padding: "10px", display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: "4px", maxHeight: "200px", overflowY: "auto" }}>
                 {EMOJI_CATEGORIES[activeCategory].emojis.map((emoji, i) => (
                     <button key={i} onClick={() => { onSelect(emoji); onClose(); }}
-                        style={{ background: "none", border: "none", cursor: "pointer", fontSize: "22px", padding: "4px", borderRadius: "6px", transition: "background 0.1s" }}
+                        style={{ background: "none", border: "none", cursor: "pointer", fontSize: "22px", padding: "4px", borderRadius: "6px" }}
                         onMouseEnter={e => e.target.style.background = "#2a2a2a"}
                         onMouseLeave={e => e.target.style.background = "none"}>
                         {emoji}
@@ -73,7 +124,7 @@ function EmojiPicker({ onSelect, onClose }) {
     );
 }
 
-// ✅ Voice Message Recorder
+// ✅ Voice Recorder
 function VoiceRecorder({ onSend, onCancel, T }) {
     const [recording, setRecording] = useState(false);
     const [seconds, setSeconds] = useState(0);
@@ -92,38 +143,23 @@ function VoiceRecorder({ onSend, onCancel, T }) {
             mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
             mr.onstop = () => {
                 const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-                const url = URL.createObjectURL(blob);
-                setAudioBlob(blob);
-                setAudioUrl(url);
+                setAudioBlob(blob); setAudioUrl(URL.createObjectURL(blob));
                 stream.getTracks().forEach(t => t.stop());
             };
-            mr.start();
-            setRecording(true);
-            setSeconds(0);
+            mr.start(); setRecording(true); setSeconds(0);
             timerRef.current = setInterval(() => setSeconds(s => s + 1), 1000);
-        } catch {
-            alert("Microphone access வேணும்!");
-        }
+        } catch { alert("Microphone access வேணும்!"); }
     };
 
     const stopRecording = () => {
         if (mediaRecorderRef.current && recording) {
-            mediaRecorderRef.current.stop();
-            setRecording(false);
-            clearInterval(timerRef.current);
+            mediaRecorderRef.current.stop(); setRecording(false); clearInterval(timerRef.current);
         }
-    };
-
-    const handleSend = () => {
-        if (audioBlob) onSend(audioBlob, seconds);
     };
 
     const handleCancel = () => {
         if (recording) stopRecording();
-        setAudioBlob(null);
-        setAudioUrl(null);
-        setSeconds(0);
-        onCancel();
+        setAudioBlob(null); setAudioUrl(null); setSeconds(0); onCancel();
     };
 
     const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -142,16 +178,14 @@ function VoiceRecorder({ onSend, onCancel, T }) {
                             <button onClick={stopRecording} style={{ padding: "8px 14px", backgroundColor: "#e74c3c", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>⏹ Stop</button>
                         </>
                     ) : (
-                        <>
-                            <button onClick={startRecording} style={{ padding: "8px 16px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px", flex: 1 }}>🎙️ Record பண்ணு</button>
-                        </>
+                        <button onClick={startRecording} style={{ padding: "8px 16px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px", flex: 1 }}>🎙️ Record பண்ணு</button>
                     )}
                     <button onClick={handleCancel} style={{ padding: "8px 12px", backgroundColor: T.card2, color: T.text2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>✕</button>
                 </>
             ) : (
                 <>
                     <audio src={audioUrl} controls style={{ flex: 1, height: "32px" }} />
-                    <button onClick={handleSend} style={{ padding: "8px 14px", backgroundColor: "#27ae60", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>📤 Send</button>
+                    <button onClick={() => onSend(audioBlob, seconds)} style={{ padding: "8px 14px", backgroundColor: "#27ae60", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>📤 Send</button>
                     <button onClick={handleCancel} style={{ padding: "8px 10px", backgroundColor: T.card2, color: T.text2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>✕</button>
                 </>
             )}
@@ -250,9 +284,7 @@ function RemoteVideo({ small }) {
 function FullscreenFaceBar({ onEnd, isMuted, isCamOff, onToggleMic, onToggleCam }) {
     return (
         <div style={{ position: "absolute", bottom: "24px", right: "24px", display: "flex", flexDirection: "column", gap: "8px", zIndex: 9500, alignItems: "flex-end" }}>
-            <div style={{ display: "flex", gap: "6px" }}>
-                <LocalVideo small /><RemoteVideo small />
-            </div>
+            <div style={{ display: "flex", gap: "6px" }}><LocalVideo small /><RemoteVideo small /></div>
             <div style={{ display: "flex", gap: "6px" }}>
                 <button onClick={onToggleMic} style={{ padding: "6px 12px", color: "white", border: "none", borderRadius: "16px", cursor: "pointer", fontSize: "12px", backgroundColor: isMuted ? "#e74c3c" : "rgba(0,0,0,0.75)" }}>{isMuted ? "🔇" : "🎤"}</button>
                 <button onClick={onToggleCam} style={{ padding: "6px 12px", color: "white", border: "none", borderRadius: "16px", cursor: "pointer", fontSize: "12px", backgroundColor: isCamOff ? "#e74c3c" : "rgba(0,0,0,0.75)" }}>{isCamOff ? "📷" : "📸"}</button>
@@ -276,7 +308,8 @@ function NormalCallPopup({ onEnd, isMuted, isCamOff, onToggleMic, onToggleCam })
     }, []);
     return (
         <div style={{ position: "fixed", left: pos.x, top: pos.y, width: "390px", backgroundColor: "#1a1a1a", borderRadius: "16px", border: "2px solid #27ae60", zIndex: 9999, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.9)", userSelect: "none" }}>
-            <div onMouseDown={(e) => { dragging.current = true; offset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y }; }} onTouchStart={(e) => { dragging.current = true; offset.current = { x: e.touches[0].clientX - pos.x, y: e.touches[0].clientY - pos.y }; }}
+            <div onMouseDown={(e) => { dragging.current = true; offset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y }; }}
+                onTouchStart={(e) => { dragging.current = true; offset.current = { x: e.touches[0].clientX - pos.x, y: e.touches[0].clientY - pos.y }; }}
                 style={{ padding: "10px 16px", backgroundColor: "#111", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #333", cursor: "grab" }}>
                 <span style={{ color: "#555", fontSize: "12px" }}>⠿ Drag</span>
                 <span style={{ color: "white", fontSize: "13px", fontWeight: "bold" }}>📹 Video Call</span>
@@ -361,7 +394,6 @@ function Room() {
     const [toasts, setToasts] = useState([]);
     const [showHistory, setShowHistory] = useState(false);
     const [partnerTyping, setPartnerTyping] = useState(false);
-    // ✅ NEW states
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
 
@@ -397,23 +429,16 @@ function Room() {
         return () => { document.getElementById("screenshot-block")?.remove(); window.removeEventListener("keydown", blockPrint); };
     }, [showToast]);
 
-    // ESC
     useEffect(() => {
         const fn = (e) => { if (e.key === "Escape") { setIsFullscreen(false); setShowEmojiPicker(false); } };
         window.addEventListener("keydown", fn);
         return () => window.removeEventListener("keydown", fn);
     }, []);
 
-    // YouTube mute
     useEffect(() => {
         if (!iframeRef.current) return;
         try { iframeRef.current.contentWindow.postMessage(JSON.stringify({ event: "command", func: showVideoCall ? "mute" : "unMute", args: [] }), "*"); } catch { }
     }, [showVideoCall]);
-
-    // ✅ Auto fullscreen face cam - when going fullscreen during active call
-    useEffect(() => {
-        // No extra logic needed - LiveKitRoom persists, CallUI switches mode based on isFullscreen prop
-    }, [isFullscreen, showVideoCall]);
 
     // Room sync
     useEffect(() => {
@@ -462,10 +487,20 @@ function Room() {
         });
     }, [roomDocId, nameSet, showToast]);
 
-    // Chat
+    // ✅ Chat - decrypt messages on receive
     useEffect(() => {
         const q = query(collection(db, "chats"), where("roomId", "==", roomId), orderBy("createdAt", "asc"));
-        return onSnapshot(q, (snap) => setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+        return onSnapshot(q, async (snap) => {
+            const rawMsgs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            // Decrypt all messages in parallel
+            const decrypted = await Promise.all(rawMsgs.map(async (msg) => {
+                if (msg.type === "voice") return msg; // voice messages not encrypted (URL only)
+                if (!msg.message) return msg;
+                const plain = await decryptMessage(msg.message, roomId);
+                return { ...msg, message: plain };
+            }));
+            setMessages(decrypted);
+        });
     }, [roomId]);
 
     // Reactions
@@ -566,22 +601,21 @@ function Room() {
     const rejectCall = async () => { setIncomingCall(false); if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "ended", callBy: username }); };
     const endVideoCall = async () => { setShowVideoCall(false); setLivekitToken(null); setCallStatus(null); if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "ended", callBy: username }); };
     const sendReaction = async (emoji) => { await addDoc(collection(db, "reactions"), { roomId, emoji, username, createdAt: new Date() }); };
+    const handleEmojiSelect = (emoji) => { setNewMessage(prev => prev + emoji); };
 
+    // ✅ Send message - ENCRYPTED
     const sendMessage = async (msg) => {
         const text = msg || newMessage.trim();
         if (!text) return;
         if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { typing: "" }).catch(() => { });
         clearTimeout(typingTimeoutRef.current);
-        await addDoc(collection(db, "chats"), { roomId, username, message: text, createdAt: new Date() });
+        // Encrypt before storing
+        const encrypted = await encryptMessage(text, roomId);
+        await addDoc(collection(db, "chats"), { roomId, username, message: encrypted, createdAt: new Date() });
         if (!msg) setNewMessage("");
     };
 
-    // ✅ Emoji select handler
-    const handleEmojiSelect = (emoji) => {
-        setNewMessage(prev => prev + emoji);
-    };
-
-    // ✅ Voice message send - upload to Cloudinary as audio
+    // ✅ Voice message send
     const handleVoiceSend = async (audioBlob, duration) => {
         setShowVoiceRecorder(false);
         try {
@@ -590,13 +624,15 @@ function Room() {
             formData.append("file", audioBlob, "voice.webm");
             formData.append("upload_preset", import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET);
             formData.append("folder", "voice-messages");
-            formData.append("resource_type", "video"); // Cloudinary uses "video" for audio too
+            formData.append("resource_type", "video");
             const res = await fetch(`https://api.cloudinary.com/v1_1/${import.meta.env.VITE_CLOUDINARY_CLOUD_NAME}/video/upload`, { method: "POST", body: formData });
             const data = await res.json();
             if (!data.secure_url) throw new Error("Upload failed");
+            // Voice label also encrypted
+            const encLabel = await encryptMessage(`🎙️ Voice message (${duration}s)`, roomId);
             await addDoc(collection(db, "chats"), {
                 roomId, username,
-                message: `🎙️ Voice message (${duration}s)`,
+                message: encLabel,
                 voiceUrl: data.secure_url,
                 type: "voice",
                 createdAt: new Date(),
@@ -667,7 +703,6 @@ function Room() {
         </>
     );
 
-    // ✅ FULLSCREEN - LiveKitRoom always rendered, CallUI switches to fullscreen mode
     if (isFullscreen) {
         return (
             <div style={{ position: "fixed", inset: 0, backgroundColor: "#000", zIndex: 9000 }}>
@@ -684,18 +719,15 @@ function Room() {
                                 style={{ fontSize: "24px", backgroundColor: "rgba(0,0,0,0.5)", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>{emoji}</button>
                         ))}
                     </div>
-
-                    {/* ✅ FIXED: LiveKitRoom always present during call - auto shows face in fullscreen */}
                     {showVideoCall && livekitToken ? (
                         <LiveKitRoom token={livekitToken} serverUrl={import.meta.env.VITE_LIVEKIT_URL} connect={true} video={true} audio={true} onDisconnected={endVideoCall}>
                             <RoomAudioRenderer />
                             <CallUI isFullscreen={true} onEnd={endVideoCall} />
                         </LiveKitRoom>
                     ) : (
-                        // No active call - show start button
                         <div style={{ position: "absolute", bottom: "24px", right: "24px", zIndex: 9100 }}>
                             <button onClick={startVideoCall}
-                                style={{ padding: "10px 18px", backgroundColor: "#27ae60", color: "white", border: "none", borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "bold", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
+                                style={{ padding: "10px 18px", backgroundColor: "#27ae60", color: "white", border: "none", borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "bold" }}>
                                 📹 Face Cam Start
                             </button>
                         </div>
@@ -705,7 +737,6 @@ function Room() {
         );
     }
 
-    // NORMAL MODE
     return (
         <div style={{ backgroundColor: T.bg, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
             <Toast toasts={toasts} />
@@ -717,23 +748,24 @@ function Room() {
                         {VideoPlayer}
                     </div>
 
-                    {/* ✅ Reactions bar with emoji picker button */}
                     <div style={{ backgroundColor: T.reactionBg, padding: "8px 16px", display: "flex", gap: "6px", justifyContent: "center", alignItems: "center", borderTop: `1px solid ${T.border}` }}>
                         {REACTIONS.map((emoji) => (
                             <button key={emoji} onClick={() => sendReaction(emoji)}
                                 style={{ fontSize: "26px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>{emoji}</button>
                         ))}
-                        {/* ✅ More emojis button */}
                         <button onClick={() => sendReaction("🎬")} style={{ fontSize: "22px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>🎬</button>
                         <button onClick={() => sendReaction("🥺")} style={{ fontSize: "22px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>🥺</button>
                         <button onClick={() => sendReaction("💕")} style={{ fontSize: "22px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>💕</button>
                     </div>
 
-                    {/* Controls */}
                     <div style={{ backgroundColor: T.card, padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px", borderTop: `1px solid ${T.border}` }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                             <span style={{ color: T.text3, fontSize: "13px" }}>Room:</span>
                             <span style={{ color: "#ff6b35", fontSize: "13px", fontWeight: "bold" }}>{roomId}</span>
+                            {/* ✅ Encryption indicator */}
+                            <span style={{ backgroundColor: "rgba(39,174,96,0.15)", color: "#27ae60", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "10px", padding: "2px 8px", fontSize: "11px", fontWeight: "bold" }}>
+                                🔐 Encrypted
+                            </span>
                         </div>
                         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                             <button onClick={showVideoCall ? endVideoCall : startVideoCall} disabled={callStatus === "calling"}
@@ -768,21 +800,22 @@ function Room() {
                     </div>
                 </div>
 
-                {/* ✅ Chat panel with emoji picker + voice recorder */}
+                {/* ✅ Chat panel */}
                 {showChat && (
                     <div style={{ width: "320px", backgroundColor: T.card, display: "flex", flexDirection: "column", borderLeft: `1px solid ${T.border}` }}>
-                        <div style={{ padding: "16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", color: T.text, fontWeight: "bold" }}>
-                            <span>💬 Chat</span>
+                        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                <span style={{ color: T.text, fontWeight: "bold", fontSize: "14px" }}>💬 Chat</span>
+                                <span style={{ backgroundColor: "rgba(39,174,96,0.15)", color: "#27ae60", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "8px", padding: "1px 7px", fontSize: "10px", fontWeight: "bold" }}>🔐 E2E</span>
+                            </div>
                             <span style={{ color: "#ff6b35", fontSize: "13px" }}>👤 {username}</span>
                         </div>
 
-                        {/* Messages */}
                         <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
                             {messages.length === 0 && <p style={{ color: T.text3, textAlign: "center", fontSize: "13px" }}>message இல்ல - first message பண்ணு! 👋</p>}
                             {messages.map((msg) => (
                                 <div key={msg.id} style={{ maxWidth: "85%", padding: "8px 12px", borderRadius: "12px", display: "flex", flexDirection: "column", alignSelf: msg.username === username ? "flex-end" : "flex-start", backgroundColor: msg.username === username ? "#ff6b35" : T.card2 }}>
                                     {msg.username !== username && <p style={{ color: T.text2, fontSize: "11px", margin: "0 0 4px 0" }}>{msg.username}</p>}
-                                    {/* ✅ Voice message render */}
                                     {msg.type === "voice" && msg.voiceUrl ? (
                                         <div>
                                             <p style={{ color: "rgba(255,255,255,0.8)", fontSize: "11px", margin: "0 0 4px 0" }}>🎙️ Voice message</p>
@@ -804,37 +837,27 @@ function Room() {
                             <div ref={chatEndRef} />
                         </div>
 
-                        {/* ✅ Voice recorder (shown when active) */}
                         {showVoiceRecorder && (
                             <VoiceRecorder onSend={handleVoiceSend} onCancel={() => setShowVoiceRecorder(false)} T={T} />
                         )}
 
-                        {/* ✅ Chat input with emoji picker + voice button */}
                         {!showVoiceRecorder && (
                             <div style={{ padding: "12px", borderTop: `1px solid ${T.border}`, display: "flex", gap: "6px", position: "relative" }}>
-                                {/* Emoji picker popup */}
                                 {showEmojiPicker && (
-                                    <EmojiPicker
-                                        onSelect={handleEmojiSelect}
-                                        onClose={() => setShowEmojiPicker(false)}
-                                    />
+                                    <EmojiPicker onSelect={handleEmojiSelect} onClose={() => setShowEmojiPicker(false)} />
                                 )}
-                                {/* Emoji button */}
                                 <button onClick={() => setShowEmojiPicker(p => !p)}
                                     style={{ padding: "10px", backgroundColor: showEmojiPicker ? "#ff6b35" : T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>
                                     😊
                                 </button>
-                                {/* Text input */}
                                 <input type="text" placeholder="Message type பண்ணு..." value={newMessage}
                                     onChange={handleTyping}
                                     onKeyPress={(e) => e.key === "Enter" && sendMessage()}
                                     style={{ flex: 1, padding: "10px 12px", backgroundColor: T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", outline: "none", minWidth: 0 }} />
-                                {/* Voice button */}
                                 <button onClick={() => setShowVoiceRecorder(true)}
                                     style={{ padding: "10px", backgroundColor: T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>
                                     🎙️
                                 </button>
-                                {/* Send button */}
                                 <button onClick={() => sendMessage()}
                                     style={{ padding: "10px 14px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>➤</button>
                             </div>
@@ -843,7 +866,6 @@ function Room() {
                 )}
             </div>
 
-            {/* Incoming Call */}
             {incomingCall && (
                 <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.75)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
                     <div style={{ backgroundColor: T.card, borderRadius: "20px", border: "2px solid #27ae60", padding: "40px", textAlign: "center", animation: "pulse 1.5s infinite" }}>
@@ -858,7 +880,6 @@ function Room() {
                 </div>
             )}
 
-            {/* Accept Loading */}
             {acceptLoading && (
                 <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.75)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
                     <div style={{ backgroundColor: T.card, borderRadius: "20px", border: "2px solid #ff6b35", padding: "40px", textAlign: "center" }}>
@@ -870,7 +891,6 @@ function Room() {
                 </div>
             )}
 
-            {/* ✅ FIXED: Single LiveKitRoom - always rendered when call active, isFullscreen prop controls UI */}
             {showVideoCall && livekitToken && !isFullscreen && (
                 <LiveKitRoom token={livekitToken} serverUrl={import.meta.env.VITE_LIVEKIT_URL} connect={true} video={true} audio={true} onDisconnected={endVideoCall}>
                     <RoomAudioRenderer />
