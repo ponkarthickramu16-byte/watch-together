@@ -280,10 +280,10 @@ function RemoteVideo({ small }) {
     );
 }
 
-// ✅ Fullscreen face bar
+// ✅ Fullscreen face bar - position:fixed so it renders over fullscreen video from anywhere in DOM
 function FullscreenFaceBar({ onEnd, isMuted, isCamOff, onToggleMic, onToggleCam }) {
     return (
-        <div style={{ position: "absolute", bottom: "24px", right: "24px", display: "flex", flexDirection: "column", gap: "8px", zIndex: 9500, alignItems: "flex-end" }}>
+        <div style={{ position: "fixed", bottom: "24px", right: "24px", display: "flex", flexDirection: "column", gap: "8px", zIndex: 9999, alignItems: "flex-end" }}>
             <div style={{ display: "flex", gap: "6px" }}><LocalVideo small /><RemoteVideo small /></div>
             <div style={{ display: "flex", gap: "6px" }}>
                 <button onClick={onToggleMic} style={{ padding: "6px 12px", color: "white", border: "none", borderRadius: "16px", cursor: "pointer", fontSize: "12px", backgroundColor: isMuted ? "#e74c3c" : "rgba(0,0,0,0.75)" }}>{isMuted ? "🔇" : "🎤"}</button>
@@ -758,12 +758,8 @@ function Room() {
                                 style={{ fontSize: "24px", backgroundColor: "rgba(0,0,0,0.5)", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>{emoji}</button>
                         ))}
                     </div>
-                    {showVideoCall && livekitToken ? (
-                        <LiveKitRoom token={livekitToken} serverUrl={import.meta.env.VITE_LIVEKIT_URL} connect={true} video={true} audio={true} onDisconnected={endVideoCall}>
-                            <RoomAudioRenderer />
-                            <CallUI isFullscreen={true} onEnd={endVideoCall} />
-                        </LiveKitRoom>
-                    ) : (
+                    {/* ✅ Fix: LiveKitRoom is rendered once below - CallUI portal renders here via isFullscreen prop */}
+                    {!showVideoCall && (
                         <div style={{ position: "absolute", bottom: "24px", right: "24px", zIndex: 9100 }}>
                             <button onClick={startVideoCall}
                                 style={{ padding: "10px 18px", backgroundColor: "#27ae60", color: "white", border: "none", borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "bold" }}>
@@ -930,10 +926,12 @@ function Room() {
                 </div>
             )}
 
-            {showVideoCall && livekitToken && !isFullscreen && (
+            {/* ✅ Fix: LiveKitRoom ALWAYS rendered once when call is active - no disconnect on fullscreen toggle */}
+            {showVideoCall && livekitToken && (
                 <LiveKitRoom token={livekitToken} serverUrl={import.meta.env.VITE_LIVEKIT_URL} connect={true} video={true} audio={true} onDisconnected={endVideoCall}>
                     <RoomAudioRenderer />
-                    <CallUI isFullscreen={false} onEnd={endVideoCall} />
+                    {/* CallUI switches between fullscreen overlay and normal popup based on isFullscreen */}
+                    <CallUI isFullscreen={isFullscreen} onEnd={endVideoCall} />
                 </LiveKitRoom>
             )}
 
