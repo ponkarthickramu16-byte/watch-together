@@ -64,6 +64,7 @@ const encryptMessage = async (text, roomId) => {
         return btoa(String.fromCharCode(...combined));
     } catch {
         return text;
+    }
 };
 
 const decryptMessage = async (cipherB64, roomId) => {
