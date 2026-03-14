@@ -714,71 +714,64 @@ function Room() {
 
     const youtubeId = getYouTubeId(roomData.movieUrl);
 
-    const VideoPlayer = (
-        <>
-            {youtubeId ? (
-                <div style={{ width: "100%", height: "100%", position: "relative" }}>
-                    {/* ✅ Bug fix 7: stable src - no reload on play/pause, controlled via postMessage */}
-                    <iframe ref={iframeRef}
-                        src={getYouTubeSrc(youtubeId)}
-                        style={{ width: "100%", height: "100%", border: "none" }}
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
-                    <div style={{ position: "absolute", bottom: "16px", left: "50%", transform: "translateX(-50%)", zIndex: 10 }}>
-                        <button onClick={() => { const p = !isPlaying; setIsPlaying(p); updatePlayState(p); }}
-                            style={{ padding: "8px 24px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", backgroundColor: isPlaying ? "#555" : "#ff6b35" }}>
-                            {isPlaying ? "⏸ Pause Sync" : "▶ Play Sync"}
-                        </button>
-                    </div>
-                </div>
-            ) : (
-                <video ref={videoRef} src={roomData.movieUrl} controls style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
-                    onPlay={() => updatePlayState(true, videoRef.current?.currentTime)}
-                    onPause={() => updatePlayState(false, videoRef.current?.currentTime)}
-                    onSeeked={handleSeek} />
-            )}
-            {floatingReactions.map((r) => (
-                <div key={r.id} style={{ position: "absolute", bottom: "20px", left: `${r.x}%`, fontSize: "40px", animation: "floatUp 3s ease-out forwards", pointerEvents: "none", zIndex: 10 }}>{r.emoji}</div>
-            ))}
-        </>
-    );
-
     return (
         <div style={{ backgroundColor: T.bg, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
             <Toast toasts={toasts} />
             {showHistory && <WatchHistoryModal roomId={roomId} onClose={() => setShowHistory(false)} T={T} />}
 
-            {/* ✅ FULLSCREEN OVERLAY - same tree, no unmount! */}
+            {/* ✅ Fullscreen controls overlay - pointerEvents none so video still clickable */}
             {isFullscreen && (
-                <div style={{ position: "fixed", inset: 0, backgroundColor: "#000", zIndex: 9000 }}>
-                    <div style={{ width: "100%", height: "100%", position: "relative" }}>
-                        {VideoPlayer}
-                        <button onClick={() => setIsFullscreen(false)}
-                            style={{ position: "absolute", top: "16px", left: "16px", padding: "8px 16px", backgroundColor: "rgba(0,0,0,0.75)", color: "white", border: "1px solid #555", borderRadius: "8px", cursor: "pointer", fontSize: "13px", zIndex: 9100 }}>
-                            ✕ Exit
-                        </button>
-                        <div style={{ position: "absolute", bottom: "20px", left: "20px", display: "flex", gap: "8px", zIndex: 9100 }}>
-                            {REACTIONS.map((emoji) => (
-                                <button key={emoji} onClick={() => sendReaction(emoji)}
-                                    style={{ fontSize: "24px", backgroundColor: "rgba(0,0,0,0.5)", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>{emoji}</button>
-                            ))}
-                        </div>
-                        {/* Face cam handled by CallUI (LiveKitRoom context) below */}
-                        {!showVideoCall && (
-                            <div style={{ position: "absolute", bottom: "24px", right: "24px", zIndex: 9100 }}>
-                                <button onClick={startVideoCall}
-                                    style={{ padding: "10px 18px", backgroundColor: "#27ae60", color: "white", border: "none", borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "bold" }}>
-                                    📹 Face Cam Start
-                                </button>
-                            </div>
-                        )}
+                <div style={{ position: "fixed", inset: 0, zIndex: 9000, pointerEvents: "none" }}>
+                    <button onClick={() => setIsFullscreen(false)}
+                        style={{ position: "absolute", top: "16px", left: "16px", padding: "8px 16px", backgroundColor: "rgba(0,0,0,0.75)", color: "white", border: "1px solid #555", borderRadius: "8px", cursor: "pointer", fontSize: "13px", zIndex: 9100, pointerEvents: "all" }}>
+                        ✕ Exit
+                    </button>
+                    <div style={{ position: "absolute", bottom: "20px", left: "20px", display: "flex", gap: "8px", zIndex: 9100, pointerEvents: "all" }}>
+                        {REACTIONS.map((emoji) => (
+                            <button key={emoji} onClick={() => sendReaction(emoji)}
+                                style={{ fontSize: "24px", backgroundColor: "rgba(0,0,0,0.5)", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>{emoji}</button>
+                        ))}
                     </div>
+                    {!showVideoCall && (
+                        <div style={{ position: "absolute", bottom: "24px", right: "24px", zIndex: 9100, pointerEvents: "all" }}>
+                            <button onClick={startVideoCall}
+                                style={{ padding: "10px 18px", backgroundColor: "#27ae60", color: "white", border: "none", borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "bold" }}>
+                                📹 Face Cam Start
+                            </button>
+                        </div>
+                    )}
                 </div>
             )}
 
             <div style={{ display: "flex", flex: 1, height: "100vh" }}>
                 <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-                    <div style={{ flex: 1, backgroundColor: T.playerBg, position: "relative", minHeight: "0", overflow: "hidden" }}>
-                        {VideoPlayer}
+                    {/* ✅ VideoPlayer renders ONCE - CSS moves it to fullscreen, no unmount/remount */}
+                    <div style={isFullscreen
+                        ? { position: "fixed", inset: 0, zIndex: 8999, backgroundColor: "#000" }
+                        : { flex: 1, backgroundColor: T.playerBg, position: "relative", minHeight: "0", overflow: "hidden" }
+                    }>
+                        {youtubeId ? (
+                            <div style={{ width: "100%", height: "100%", position: "relative" }}>
+                                <iframe ref={iframeRef}
+                                    src={getYouTubeSrc(youtubeId)}
+                                    style={{ width: "100%", height: "100%", border: "none" }}
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
+                                <div style={{ position: "absolute", bottom: "16px", left: "50%", transform: "translateX(-50%)", zIndex: 10 }}>
+                                    <button onClick={() => { const p = !isPlaying; setIsPlaying(p); updatePlayState(p); }}
+                                        style={{ padding: "8px 24px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", backgroundColor: isPlaying ? "#555" : "#ff6b35" }}>
+                                        {isPlaying ? "⏸ Pause Sync" : "▶ Play Sync"}
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <video ref={videoRef} src={roomData.movieUrl} controls style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
+                                onPlay={() => updatePlayState(true, videoRef.current?.currentTime)}
+                                onPause={() => updatePlayState(false, videoRef.current?.currentTime)}
+                                onSeeked={handleSeek} />
+                        )}
+                        {floatingReactions.map((r) => (
+                            <div key={r.id} style={{ position: "absolute", bottom: "20px", left: `${r.x}%`, fontSize: "40px", animation: "floatUp 3s ease-out forwards", pointerEvents: "none", zIndex: 10 }}>{r.emoji}</div>
+                        ))}
                     </div>
 
                     <div style={{ backgroundColor: T.reactionBg, padding: "8px 16px", display: "flex", gap: "6px", justifyContent: "center", alignItems: "center", borderTop: `1px solid ${T.border}` }}>
