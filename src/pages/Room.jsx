@@ -419,9 +419,8 @@ function Room() {
     const joinedRef = useRef(false); // ✅ prevent autoplay on join
 
     useEffect(() => { usernameRef.current = username; }, [username]);
-    useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
-    // Reset YouTube ready state when room changes
     useEffect(() => { ytReadyRef.current = false; ytSrcRef.current = null; pendingYtCmd.current = null; }, [roomId]);
+    useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
     // ✅ After joining, wait 2s before allowing play events (prevents browser autoplay trigger)
     useEffect(() => {
@@ -457,31 +456,36 @@ function Room() {
         return () => window.removeEventListener("keydown", fn);
     }, []);
 
-    // YouTube iframe - autoplay=0, controlled only via Play Sync button
+    // YouTube - autoplay=0, play only via Play Sync button
     const ytSrcRef = useRef(null);
-    const ytReadyRef = useRef(false); // track if iframe API is ready
-    const pendingYtCmd = useRef(null); // queue command if not ready yet
+    const ytReadyRef = useRef(false);
+    const pendingYtCmd = useRef(null);
 
     const getYouTubeSrc = (id) => {
         if (!ytSrcRef.current) {
-            // autoplay=0 — நாமே play பண்ணும்போது மட்டும் play ஆகணும்
-            ytSrcRef.current = `https://www.youtube.com/embed/${id}?autoplay=0&controls=1&enablejsapi=1&origin=${window.location.origin}&rel=0`;
+            ytSrcRef.current = `https://www.youtube.com/embed/${id}?autoplay=0&controls=1&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}&rel=0&playsinline=1`;
         }
         return ytSrcRef.current;
     };
 
-    // Listen for YouTube iframe API ready message
+    const sendYtCommand = useCallback((func) => {
+        if (!iframeRef.current) return;
+        const cmd = JSON.stringify({ event: "command", func, args: [] });
+        if (ytReadyRef.current) {
+            try { iframeRef.current.contentWindow?.postMessage(cmd, "*"); } catch { }
+        } else {
+            pendingYtCmd.current = func;
+        }
+    }, []);
+
     useEffect(() => {
         const onMsg = (e) => {
             try {
                 const d = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
-                if (d?.event === "onReady" || d?.info === 1) {
+                if ((d?.event === "onReady" || d?.event === "infoDelivery") && !ytReadyRef.current) {
                     ytReadyRef.current = true;
-                    // Send any pending command
-                    if (pendingYtCmd.current && iframeRef.current) {
-                        iframeRef.current.contentWindow?.postMessage(
-                            JSON.stringify({ event: "command", func: pendingYtCmd.current, args: [] }), "*"
-                        );
+                    if (pendingYtCmd.current) {
+                        sendYtCommand(pendingYtCmd.current);
                         pendingYtCmd.current = null;
                     }
                 }
@@ -489,27 +493,13 @@ function Room() {
         };
         window.addEventListener("message", onMsg);
         return () => window.removeEventListener("message", onMsg);
-    }, []);
-
-    const sendYtCommand = (func) => {
-        if (!iframeRef.current) return;
-        if (ytReadyRef.current) {
-            iframeRef.current.contentWindow?.postMessage(
-                JSON.stringify({ event: "command", func, args: [] }), "*"
-            );
-        } else {
-            // Queue it - will send when ready
-            pendingYtCmd.current = func;
-        }
-    };
+    }, [sendYtCommand]);
 
     useEffect(() => {
-        if (!roomData?.movieUrl) return;
-        const ytId = getYouTubeId(roomData.movieUrl);
-        if (!ytId) return;
-        sendYtCommand(isPlaying ? "playVideo" : "pauseVideo");
-    }, [isPlaying, roomData?.movieUrl]);
-
+        if (!roomData?.movieUrl || !getYouTubeId(roomData.movieUrl)) return;
+        const t = setTimeout(() => sendYtCommand(isPlaying ? "playVideo" : "pauseVideo"), 300);
+        return () => clearTimeout(t);
+    }, [isPlaying, roomData?.movieUrl, sendYtCommand]);
     // Room sync
     useEffect(() => {
         const q = query(collection(db, "rooms"), where("roomId", "==", roomId));
