@@ -420,6 +420,8 @@ function Room() {
 
     useEffect(() => { usernameRef.current = username; }, [username]);
     useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+    // Reset YouTube ready state when room changes
+    useEffect(() => { ytReadyRef.current = false; ytSrcRef.current = null; pendingYtCmd.current = null; }, [roomId]);
 
     // ✅ After joining, wait 2s before allowing play events (prevents browser autoplay trigger)
     useEffect(() => {
@@ -455,23 +457,57 @@ function Room() {
         return () => window.removeEventListener("keydown", fn);
     }, []);
 
-    // ✅ Bug fix 7: YouTube - use postMessage for play/pause, keep src stable (no reload)
+    // YouTube iframe - autoplay=0, controlled only via Play Sync button
     const ytSrcRef = useRef(null);
+    const ytReadyRef = useRef(false); // track if iframe API is ready
+    const pendingYtCmd = useRef(null); // queue command if not ready yet
+
     const getYouTubeSrc = (id) => {
         if (!ytSrcRef.current) {
-            ytSrcRef.current = `https://www.youtube.com/embed/${id}?autoplay=1&controls=1&enablejsapi=1&origin=${window.location.origin}&rel=0`;
+            // autoplay=0 — நாமே play பண்ணும்போது மட்டும் play ஆகணும்
+            ytSrcRef.current = `https://www.youtube.com/embed/${id}?autoplay=0&controls=1&enablejsapi=1&origin=${window.location.origin}&rel=0`;
         }
         return ytSrcRef.current;
     };
 
+    // Listen for YouTube iframe API ready message
     useEffect(() => {
-        if (!iframeRef.current || !roomData?.movieUrl) return;
+        const onMsg = (e) => {
+            try {
+                const d = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
+                if (d?.event === "onReady" || d?.info === 1) {
+                    ytReadyRef.current = true;
+                    // Send any pending command
+                    if (pendingYtCmd.current && iframeRef.current) {
+                        iframeRef.current.contentWindow?.postMessage(
+                            JSON.stringify({ event: "command", func: pendingYtCmd.current, args: [] }), "*"
+                        );
+                        pendingYtCmd.current = null;
+                    }
+                }
+            } catch { }
+        };
+        window.addEventListener("message", onMsg);
+        return () => window.removeEventListener("message", onMsg);
+    }, []);
+
+    const sendYtCommand = (func) => {
+        if (!iframeRef.current) return;
+        if (ytReadyRef.current) {
+            iframeRef.current.contentWindow?.postMessage(
+                JSON.stringify({ event: "command", func, args: [] }), "*"
+            );
+        } else {
+            // Queue it - will send when ready
+            pendingYtCmd.current = func;
+        }
+    };
+
+    useEffect(() => {
+        if (!roomData?.movieUrl) return;
         const ytId = getYouTubeId(roomData.movieUrl);
         if (!ytId) return;
-        try {
-            const func = isPlaying ? "playVideo" : "pauseVideo";
-            iframeRef.current.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args: [] }), "*");
-        } catch { }
+        sendYtCommand(isPlaying ? "playVideo" : "pauseVideo");
     }, [isPlaying, roomData?.movieUrl]);
 
     // Room sync
