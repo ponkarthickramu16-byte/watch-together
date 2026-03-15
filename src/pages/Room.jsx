@@ -530,6 +530,19 @@ function Room() {
         });
     }, [roomDocId, nameSet, showToast]);
 
+    // Mark partner messages as read when received
+    const markMessagesRead = useCallback(async (msgs) => {
+        if (!roomId || !username) return;
+        const unread = msgs.filter(m => m.username !== username && !(m.readBy || []).includes(username));
+        for (const m of unread) {
+            if (m.firestoreId) {
+                updateDoc(doc(db, "chats", m.firestoreId), {
+                    readBy: arrayUnion(username)
+                }).catch(() => { });
+            }
+        }
+    }, [roomId, username]);
+
     // ✅ Chat - decrypt messages on receive
     useEffect(() => {
         const q = query(collection(db, "chats"), where("roomId", "==", roomId), orderBy("createdAt", "asc"));
@@ -754,18 +767,6 @@ function Room() {
         setReplyTo(null);
     };
 
-    // Mark partner messages as read when received
-    const markMessagesRead = useCallback(async (msgs) => {
-        if (!roomId || !username) return;
-        const unread = msgs.filter(m => m.username !== username && !(m.readBy || []).includes(username));
-        for (const m of unread) {
-            if (m.firestoreId) {
-                updateDoc(doc(db, "chats", m.firestoreId), {
-                    readBy: arrayUnion(username)
-                }).catch(() => { });
-            }
-        }
-    }, [roomId, username]);
     const handleVoiceSend = async (audioBlob, duration) => {
         setShowVoiceRecorder(false);
         try {
