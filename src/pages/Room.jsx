@@ -415,9 +415,18 @@ function Room() {
     const isSyncingSeekRef = useRef(false);
     const typingTimeoutRef = useRef(null);
     const historyLoggedRef = useRef(false);
+    const joinedRef = useRef(false); // ✅ prevent autoplay on join
 
     useEffect(() => { usernameRef.current = username; }, [username]);
     useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+    // ✅ After joining, wait 2s before allowing play events (prevents browser autoplay trigger)
+    useEffect(() => {
+        if (!nameSet) return;
+        joinedRef.current = false;
+        const t = setTimeout(() => { joinedRef.current = true; }, 2000);
+        return () => clearTimeout(t);
+    }, [nameSet]);
 
     const showToast = useCallback((message, icon = "🔔", color = "#27ae60") => {
         const id = Date.now() + Math.random();
@@ -836,8 +845,8 @@ function Room() {
                             </div>
                         ) : (
                             <video ref={videoRef} src={roomData.movieUrl} controls style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
-                                onPlay={() => updatePlayState(true, videoRef.current?.currentTime)}
-                                onPause={() => updatePlayState(false, videoRef.current?.currentTime)}
+                                onPlay={() => { if (joinedRef.current) updatePlayState(true, videoRef.current?.currentTime); }}
+                                onPause={() => { if (joinedRef.current) updatePlayState(false, videoRef.current?.currentTime); }}
                                 onSeeked={handleSeek} />
                         )}
                         {floatingReactions.map((r) => (
