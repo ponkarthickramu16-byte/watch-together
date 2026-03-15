@@ -29,26 +29,15 @@ const getYouTubeId = (url) => {
     return match ? match[1] : null;
 };
 
-// ============================================================
-// ✅ AES-GCM ENCRYPTION HELPERS
-// Key = roomId (same for everyone in room, nobody outside knows)
-// Firestore-ல ciphertext மட்டும் store ஆகும்
-// ============================================================
 const getCryptoKey = async (roomId) => {
     const encoder = new TextEncoder();
     const keyMaterial = await window.crypto.subtle.importKey(
-        "raw",
-        encoder.encode(roomId.padEnd(32, "0").substring(0, 32)), // 32 bytes = 256 bit
-        "PBKDF2",
-        false,
-        ["deriveKey"]
+        "raw", encoder.encode(roomId.padEnd(32, "0").substring(0, 32)),
+        "PBKDF2", false, ["deriveKey"]
     );
     return window.crypto.subtle.deriveKey(
         { name: "PBKDF2", salt: encoder.encode("watch-together-salt"), iterations: 100000, hash: "SHA-256" },
-        keyMaterial,
-        { name: "AES-GCM", length: 256 },
-        false,
-        ["encrypt", "decrypt"]
+        keyMaterial, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]
     );
 };
 
@@ -59,30 +48,21 @@ const encryptMessage = async (text, roomId) => {
         const encoded = new TextEncoder().encode(text);
         const cipher = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
         const combined = new Uint8Array(iv.byteLength + cipher.byteLength);
-        combined.set(iv, 0);
-        combined.set(new Uint8Array(cipher), iv.byteLength);
+        combined.set(iv, 0); combined.set(new Uint8Array(cipher), iv.byteLength);
         return btoa(String.fromCharCode(...combined));
-    } catch {
-        return text;
-    }
+    } catch { return text; }
 };
 
 const decryptMessage = async (cipherB64, roomId) => {
     try {
         const key = await getCryptoKey(roomId);
         const combined = Uint8Array.from(atob(cipherB64), c => c.charCodeAt(0));
-        const iv = combined.slice(0, 12);
-        const cipher = combined.slice(12);
+        const iv = combined.slice(0, 12); const cipher = combined.slice(12);
         const decrypted = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, cipher);
         return new TextDecoder().decode(decrypted);
-    } catch {
-        return cipherB64;
-    }
+    } catch { return cipherB64; }
 };
 
-// ============================================================
-
-// ✅ Toast
 function Toast({ toasts }) {
     return (
         <div style={{ position: "fixed", top: "20px", right: "20px", zIndex: 99999, display: "flex", flexDirection: "column", gap: "8px", pointerEvents: "none" }}>
@@ -95,7 +75,6 @@ function Toast({ toasts }) {
     );
 }
 
-// ✅ Emoji Picker
 function EmojiPicker({ onSelect, onClose }) {
     const [activeCategory, setActiveCategory] = useState(0);
     return (
@@ -123,7 +102,6 @@ function EmojiPicker({ onSelect, onClose }) {
     );
 }
 
-// ✅ Voice Recorder
 function VoiceRecorder({ onSend, onCancel, T }) {
     const [recording, setRecording] = useState(false);
     const [seconds, setSeconds] = useState(0);
@@ -132,13 +110,11 @@ function VoiceRecorder({ onSend, onCancel, T }) {
     const mediaRecorderRef = useRef(null);
     const chunksRef = useRef([]);
     const timerRef = useRef(null);
-
     const startRecording = async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const mr = new MediaRecorder(stream);
-            mediaRecorderRef.current = mr;
-            chunksRef.current = [];
+            mediaRecorderRef.current = mr; chunksRef.current = [];
             mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
             mr.onstop = () => {
                 const blob = new Blob(chunksRef.current, { type: "audio/webm" });
@@ -149,20 +125,16 @@ function VoiceRecorder({ onSend, onCancel, T }) {
             timerRef.current = setInterval(() => setSeconds(s => s + 1), 1000);
         } catch { alert("Microphone access வேணும்!"); }
     };
-
     const stopRecording = () => {
         if (mediaRecorderRef.current && recording) {
             mediaRecorderRef.current.stop(); setRecording(false); clearInterval(timerRef.current);
         }
     };
-
     const handleCancel = () => {
         if (recording) stopRecording();
         setAudioBlob(null); setAudioUrl(null); setSeconds(0); onCancel();
     };
-
     const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-
     return (
         <div style={{ padding: "10px 12px", borderTop: `1px solid ${T.border}`, backgroundColor: T.card, display: "flex", alignItems: "center", gap: "8px" }}>
             {!audioBlob ? (
@@ -192,7 +164,6 @@ function VoiceRecorder({ onSend, onCancel, T }) {
     );
 }
 
-// ✅ LocalVideo
 function LocalVideo({ small }) {
     const videoRef = useRef(null);
     const { localParticipant } = useLocalParticipant();
@@ -232,7 +203,6 @@ function LocalVideo({ small }) {
     );
 }
 
-// ✅ RemoteVideo
 function RemoteVideo({ small }) {
     const videoRef = useRef(null);
     const remoteParticipants = useRemoteParticipants();
@@ -279,7 +249,6 @@ function RemoteVideo({ small }) {
     );
 }
 
-// ✅ Fullscreen face bar - position:fixed, zIndex above fullscreen overlay (9000)
 function FullscreenFaceBar({ onEnd, isMuted, isCamOff, onToggleMic, onToggleCam }) {
     return (
         <div style={{ position: "fixed", bottom: "24px", right: "24px", display: "flex", flexDirection: "column", gap: "8px", zIndex: 9999, alignItems: "flex-end" }}>
@@ -294,7 +263,6 @@ function FullscreenFaceBar({ onEnd, isMuted, isCamOff, onToggleMic, onToggleCam 
 }
 
 function NormalCallPopup({ onEnd, isMuted, isCamOff, onToggleMic, onToggleCam }) {
-    // ✅ Bug fix 5: safe initial position - don't rely on window.innerWidth at render
     const [pos, setPos] = useState({ x: 20, y: 60 });
     const dragging = useRef(false); const offset = useRef({ x: 0, y: 0 });
     useEffect(() => {
@@ -335,16 +303,15 @@ function CallUI({ isFullscreen, onEnd }) {
         : <NormalCallPopup onEnd={onEnd} isMuted={isMuted} isCamOff={isCamOff} onToggleMic={toggleMic} onToggleCam={toggleCam} />;
 }
 
-// ✅ Watch History Modal
 function WatchHistoryModal({ roomId, onClose, T }) {
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [err, setErr] = useState(false); // ✅ Bug fix 8
+    const [err, setErr] = useState(false);
     useEffect(() => {
         const q = query(collection(db, "watchHistory"), where("roomId", "==", roomId), orderBy("watchedAt", "desc"));
         return onSnapshot(q,
             (snap) => { setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); },
-            () => { setErr(true); setLoading(false); } // ✅ Bug fix 8: handle error
+            () => { setErr(true); setLoading(false); }
         );
     }, [roomId]);
     return (
@@ -356,7 +323,6 @@ function WatchHistoryModal({ roomId, onClose, T }) {
                 </div>
                 <div style={{ overflowY: "auto", flex: 1, padding: "12px" }}>
                     {loading && <p style={{ color: T.text2, textAlign: "center", padding: "20px" }}>⏳ Load ஆகுது...</p>}
-                    {/* ✅ Bug fix 8: show error */}
                     {err && <p style={{ color: "#e74c3c", textAlign: "center", padding: "20px", fontSize: "13px" }}>❌ History load ஆகல. Firestore index check பண்ணு.</p>}
                     {!loading && !err && history.length === 0 && <p style={{ color: T.text3, textAlign: "center", padding: "20px" }}>இன்னும் எந்த movie-உம் பார்க்கல 🍿</p>}
                     {history.map(h => (
@@ -382,8 +348,7 @@ function Room() {
     const [roomDocId, setRoomDocId] = useState(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [copied, setCopied] = useState(false);
-    const [isSyncing, setIsSyncing] = useState(false);
-    const isSyncingRef = useRef(false); // ✅ Bug fix 1: ref for stale closure in onSnapshot
+    const isSyncingRef = useRef(false);
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState("");
     const [username, setUsername] = useState("");
@@ -403,10 +368,8 @@ function Room() {
     const [partnerTyping, setPartnerTyping] = useState(false);
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
-    const [replyTo, setReplyTo] = useState(null); // { id, username, message }
-
-    // 🟢 Presence - online/offline status
-    const [onlineUsers, setOnlineUsers] = useState([]); // who is currently online in this room
+    const [replyTo, setReplyTo] = useState(null);
+    const [onlineUsers, setOnlineUsers] = useState([]);
 
     const prevParticipantsRef = useRef([]);
     const iframeRef = useRef(null);
@@ -415,13 +378,26 @@ function Room() {
     const usernameRef = useRef("");
     const isSyncingSeekRef = useRef(false);
     const typingTimeoutRef = useRef(null);
+    const typingWriteRef = useRef(null);
     const historyLoggedRef = useRef(false);
-    const joinedRef = useRef(false); // ✅ prevent autoplay on join
+    const joinedRef = useRef(false);
+    const prevOnlineRef = useRef([]);
+
+    // FIX 1: YouTube refs defined early - before any useEffect
+    const ytSrcRef = useRef(null);
+    const ytReadyRef = useRef(false);
+    const pendingYtCmdRef = useRef(null);
 
     useEffect(() => { usernameRef.current = username; }, [username]);
     useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-    // ✅ After joining, wait 2s before allowing play events (prevents browser autoplay trigger)
+    // Reset YouTube on room change
+    useEffect(() => {
+        ytSrcRef.current = null;
+        ytReadyRef.current = false;
+        pendingYtCmdRef.current = null;
+    }, [roomId]);
+
     useEffect(() => {
         if (!nameSet) return;
         joinedRef.current = false;
@@ -435,7 +411,6 @@ function Room() {
         setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
     }, []);
 
-    // Screenshot block
     useEffect(() => {
         const style = document.createElement("style");
         style.id = "screenshot-block";
@@ -455,18 +430,6 @@ function Room() {
         return () => window.removeEventListener("keydown", fn);
     }, []);
 
-    // ✅ YouTube - autoplay=0, only Play Sync button controls playback
-    const ytSrcRef = useRef(null);
-    const ytReadyRef = useRef(false);
-    const pendingYtCmdRef = useRef(null);
-
-    // Reset YouTube state on room change
-    useEffect(() => {
-        ytSrcRef.current = null;
-        ytReadyRef.current = false;
-        pendingYtCmdRef.current = null;
-    }, [roomId]);
-
     const getYouTubeSrc = useCallback((id) => {
         if (!ytSrcRef.current) {
             ytSrcRef.current = `https://www.youtube.com/embed/${id}?autoplay=0&controls=1&enablejsapi=1&origin=${window.location.origin}&rel=0&playsinline=1`;
@@ -477,29 +440,19 @@ function Room() {
     const sendYtCmd = useCallback((func) => {
         if (!iframeRef.current) return;
         if (ytReadyRef.current) {
-            try {
-                iframeRef.current.contentWindow?.postMessage(
-                    JSON.stringify({ event: "command", func, args: [] }), "*"
-                );
-            } catch { }
+            try { iframeRef.current.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args: [] }), "*"); } catch { }
         } else {
             pendingYtCmdRef.current = func;
         }
     }, []);
 
-    // YouTube API ready listener
-    // YouTube sends multiple message types - we check playerState != -1 to know it's loaded
     useEffect(() => {
         const onMsg = (e) => {
             try {
                 const d = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
-                // onReady event OR first infoDelivery means player is ready
                 if (d?.event === "onReady" || (d?.event === "infoDelivery" && !ytReadyRef.current)) {
                     ytReadyRef.current = true;
-                    if (pendingYtCmdRef.current) {
-                        sendYtCmd(pendingYtCmdRef.current);
-                        pendingYtCmdRef.current = null;
-                    }
+                    if (pendingYtCmdRef.current) { sendYtCmd(pendingYtCmdRef.current); pendingYtCmdRef.current = null; }
                 }
             } catch { }
         };
@@ -507,7 +460,6 @@ function Room() {
         return () => window.removeEventListener("message", onMsg);
     }, [sendYtCmd]);
 
-    // Send play/pause when isPlaying changes (with small delay to avoid race)
     useEffect(() => {
         if (!roomData?.movieUrl || !getYouTubeId(roomData.movieUrl)) return;
         const cmd = isPlaying ? "playVideo" : "pauseVideo";
@@ -515,7 +467,7 @@ function Room() {
         return () => clearTimeout(t);
     }, [isPlaying, roomData?.movieUrl, sendYtCmd]);
 
-    // Room sync
+    // FIX 4: Remove isSyncing from deps - use only roomId
     useEffect(() => {
         const q = query(collection(db, "rooms"), where("roomId", "==", roomId));
         return onSnapshot(q, (snapshot) => {
@@ -524,42 +476,42 @@ function Room() {
                 setRoomDocId(docData.id);
                 const data = docData.data();
                 setRoomData(data);
-                if (!isSyncingRef.current) setIsPlaying(data.isPlaying); // ✅ Bug fix 1: use ref
+                if (!isSyncingRef.current) setIsPlaying(data.isPlaying);
                 if (videoRef.current && data.currentTime !== undefined && !isSyncingSeekRef.current) {
                     const diff = Math.abs(videoRef.current.currentTime - data.currentTime);
                     if (diff > 2) videoRef.current.currentTime = data.currentTime;
                 }
-                if (videoRef.current && !isSyncingRef.current) { // ✅ Bug fix 1
+                if (videoRef.current && !isSyncingRef.current) {
                     if (data.isPlaying && videoRef.current.paused) videoRef.current.play().catch(() => { });
                     else if (!data.isPlaying && !videoRef.current.paused) videoRef.current.pause();
                 }
             }
         });
-    }, [roomId, isSyncing]);
+    }, [roomId]); // FIX 4: removed isSyncing dep
 
-    // Call + join + typing
+    // FIX 2: Merged call+typing+presence into ONE onSnapshot listener
     useEffect(() => {
         if (!roomDocId || !nameSet) return;
         return onSnapshot(doc(db, "rooms", roomDocId), (snap) => {
             const data = snap.data(); if (!data) return;
             const me = usernameRef.current;
+
+            // Call status
             if (data.callStatus === "calling" && data.callBy !== me) { setCallerName(data.callBy || "Partner"); setIncomingCall(true); }
-            // ✅ Bug fix 3: ended state should reset for everyone, not just one side
             if (data.callStatus === "idle" || data.callStatus === "ended") {
                 setIncomingCall(false);
-                // Only reset if we're not the one who ended (avoid self-trigger)
-                if (data.callBy !== me) {
-                    setCallStatus(null);
-                    setShowVideoCall(false);
-                    setLivekitToken(null);
-                }
+                if (data.callBy !== me) { setCallStatus(null); setShowVideoCall(false); setLivekitToken(null); }
             }
+
+            // Participants join toast
             if (data.participants && Array.isArray(data.participants)) {
                 const prev = prevParticipantsRef.current;
                 const newOnes = data.participants.filter(p => p !== me && !prev.includes(p));
                 newOnes.forEach(p => showToast(`${p} join ஆனாங்க! 🎉`, "💚", "#27ae60"));
                 prevParticipantsRef.current = data.participants;
             }
+
+            // Typing
             if (data.typing && data.typing !== me) {
                 setPartnerTyping(true);
                 clearTimeout(typingTimeoutRef.current);
@@ -568,23 +520,44 @@ function Room() {
                 setPartnerTyping(false);
                 clearTimeout(typingTimeoutRef.current);
             }
+
+            // FIX 2: Presence handled here too - no separate listener
+            if (data.presence) {
+                const now = Date.now();
+                const online = Object.entries(data.presence)
+                    .filter(([, ts]) => ts && (now - ts) < 40000)
+                    .map(([name]) => name);
+                setOnlineUsers(online);
+            } else {
+                setOnlineUsers([]);
+            }
         });
     }, [roomDocId, nameSet, showToast]);
 
-    // Mark partner messages as read when received
+    // Online/offline toasts
+    useEffect(() => {
+        if (!nameSet) return;
+        const prev = prevOnlineRef.current;
+        const others = onlineUsers.filter(u => u !== username);
+        const prevOthers = prev.filter(u => u !== username);
+        others.filter(u => !prevOthers.includes(u)).forEach(u => showToast(`${u} Online ஆனாங்க! 🟢`, "🟢", "#27ae60"));
+        prevOthers.filter(u => !others.includes(u)).forEach(u => showToast(`${u} Offline ஆனாங்க 🔴`, "🔴", "#e74c3c"));
+        prevOnlineRef.current = onlineUsers;
+    }, [onlineUsers, username, nameSet, showToast]);
+
     const markMessagesRead = useCallback(async (msgs) => {
         if (!roomId || !username) return;
-        const unread = msgs.filter(m => m.username !== username && !(m.readBy || []).includes(username));
+        // FIX 7: Only process truly unread messages from others
+        const unread = msgs.filter(m =>
+            m.username !== username &&
+            !(m.readBy || []).includes(username) &&
+            m.firestoreId
+        );
         for (const m of unread) {
-            if (m.firestoreId) {
-                updateDoc(doc(db, "chats", m.firestoreId), {
-                    readBy: arrayUnion(username)
-                }).catch(() => { });
-            }
+            updateDoc(doc(db, "chats", m.firestoreId), { readBy: arrayUnion(username) }).catch(() => { });
         }
     }, [roomId, username]);
 
-    // ✅ Chat - decrypt messages on receive
     useEffect(() => {
         const q = query(collection(db, "chats"), where("roomId", "==", roomId), orderBy("createdAt", "asc"));
         return onSnapshot(q, async (snap) => {
@@ -593,20 +566,15 @@ function Room() {
                 if (msg.type === "voice") return msg;
                 if (!msg.message) return msg;
                 const plain = await decryptMessage(msg.message, roomId);
-                // Decrypt replyToMessage if present
                 let replyPlain = null;
-                if (msg.replyToMessage) {
-                    replyPlain = await decryptMessage(msg.replyToMessage, roomId);
-                }
+                if (msg.replyToMessage) replyPlain = await decryptMessage(msg.replyToMessage, roomId);
                 return { ...msg, message: plain, replyToMessageDecrypted: replyPlain };
             }));
             setMessages(decrypted);
-            // Mark partner messages as read
             markMessagesRead(decrypted);
         });
     }, [roomId, markMessagesRead]);
 
-    // Reactions
     useEffect(() => {
         const q = query(collection(db, "reactions"), where("roomId", "==", roomId), orderBy("createdAt", "asc"));
         return onSnapshot(q, (snap) => {
@@ -620,65 +588,29 @@ function Room() {
         });
     }, [roomId]);
 
-    // Register participant
     useEffect(() => {
         if (!roomDocId || !username) return;
         updateDoc(doc(db, "rooms", roomDocId), { participants: arrayUnion(username) }).catch(() => { });
     }, [roomDocId, username]);
 
-    // 🟢 PRESENCE - online/offline tracking
+    // FIX 3: Presence - visibilitychange properly removed
     useEffect(() => {
         if (!roomDocId || !username) return;
-
-        // Mark self as online
-        const markOnline = () => {
-            updateDoc(doc(db, "rooms", roomDocId), {
-                [`presence.${username}`]: Date.now()
-            }).catch(() => { });
-        };
-
-        // Mark self as offline
-        const markOffline = () => {
-            updateDoc(doc(db, "rooms", roomDocId), {
-                [`presence.${username}`]: null
-            }).catch(() => { });
-        };
-
+        const markOnline = () => updateDoc(doc(db, "rooms", roomDocId), { [`presence.${username}`]: Date.now() }).catch(() => { });
+        const markOffline = () => updateDoc(doc(db, "rooms", roomDocId), { [`presence.${username}`]: null }).catch(() => { });
+        const onVisibility = () => { if (document.hidden) markOffline(); else markOnline(); };
         markOnline();
-
-        // Heartbeat every 20 seconds to stay "online"
         const heartbeat = setInterval(markOnline, 20000);
-
-        // Mark offline on tab close / navigate away
         window.addEventListener("beforeunload", markOffline);
-        document.addEventListener("visibilitychange", () => {
-            if (document.hidden) markOffline();
-            else markOnline();
-        });
-
+        document.addEventListener("visibilitychange", onVisibility); // FIX 3: named function
         return () => {
             clearInterval(heartbeat);
             markOffline();
             window.removeEventListener("beforeunload", markOffline);
+            document.removeEventListener("visibilitychange", onVisibility); // FIX 3: properly removed
         };
     }, [roomDocId, username]);
 
-    // 🟢 Listen to presence changes
-    useEffect(() => {
-        if (!roomDocId) return;
-        return onSnapshot(doc(db, "rooms", roomDocId), (snap) => {
-            const data = snap.data();
-            if (!data?.presence) { setOnlineUsers([]); return; }
-            const now = Date.now();
-            // User is "online" if their heartbeat was within last 40 seconds
-            const online = Object.entries(data.presence)
-                .filter(([, ts]) => ts && (now - ts) < 40000)
-                .map(([name]) => name);
-            setOnlineUsers(online);
-        });
-    }, [roomDocId]);
-
-    // Watch history
     const saveWatchHistory = useCallback(async (docId, data, user) => {
         if (!docId || !data?.movieUrl || !user) return;
         try {
@@ -691,43 +623,20 @@ function Room() {
         } catch { }
     }, [roomId]);
 
-    // ✅ Bug fix 2: log only once per room session, never reset on pause
     useEffect(() => {
         if (isPlaying && roomDocId && roomData?.movieUrl && username && !historyLoggedRef.current) {
             historyLoggedRef.current = true;
             saveWatchHistory(roomDocId, roomData, username);
         }
-        // Removed: if (!isPlaying) historyLoggedRef.current = false — was causing duplicate logs
     }, [isPlaying, roomDocId, roomData, username, saveWatchHistory]);
-
-    // 🟢 Toast when partner comes online or goes offline
-    const prevOnlineRef = useRef([]);
-    useEffect(() => {
-        if (!nameSet) return;
-        const prev = prevOnlineRef.current;
-        const others = onlineUsers.filter(u => u !== username);
-        const prevOthers = prev.filter(u => u !== username);
-
-        // New people online
-        others.filter(u => !prevOthers.includes(u)).forEach(u => {
-            showToast(`${u} Online ஆனாங்க! 🟢`, "🟢", "#27ae60");
-        });
-        // People went offline
-        prevOthers.filter(u => !others.includes(u)).forEach(u => {
-            showToast(`${u} Offline ஆனாங்க 🔴`, "🔴", "#e74c3c");
-        });
-
-        prevOnlineRef.current = onlineUsers;
-    }, [onlineUsers, username, nameSet, showToast]);
 
     const updatePlayState = async (playing, time) => {
         if (!roomDocId) return;
         isSyncingRef.current = true;
-        setIsSyncing(true);
         const update = { isPlaying: playing };
         if (time !== undefined) update.currentTime = time;
         await updateDoc(doc(db, "rooms", roomDocId), update);
-        setTimeout(() => { isSyncingRef.current = false; setIsSyncing(false); }, 1000);
+        setTimeout(() => { isSyncingRef.current = false; }, 1000);
     };
 
     const handleSeek = async () => {
@@ -737,7 +646,6 @@ function Room() {
         setTimeout(() => { isSyncingSeekRef.current = false; }, 1500);
     };
 
-    const typingWriteRef = useRef(null);
     const handleTyping = async (e) => {
         setNewMessage(e.target.value);
         if (!roomDocId) return;
@@ -790,18 +698,11 @@ function Room() {
         if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { typing: "" }).catch(() => { });
         clearTimeout(typingTimeoutRef.current);
         const encrypted = await encryptMessage(text, roomId);
-        const chatDoc = {
-            roomId, username,
-            message: encrypted,
-            createdAt: new Date(),
-            readBy: [username], // sender auto-read
-        };
-        // Add replyTo if set
+        const chatDoc = { roomId, username, message: encrypted, createdAt: new Date(), readBy: [username] };
         if (replyTo) {
             chatDoc.replyToId = replyTo.id;
             chatDoc.replyToUsername = replyTo.username;
-            const encReply = await encryptMessage(replyTo.message, roomId);
-            chatDoc.replyToMessage = encReply;
+            chatDoc.replyToMessage = await encryptMessage(replyTo.message, roomId);
         }
         await addDoc(collection(db, "chats"), chatDoc);
         if (!msg) setNewMessage("");
@@ -820,19 +721,10 @@ function Room() {
             const res = await fetch(`https://api.cloudinary.com/v1_1/${import.meta.env.VITE_CLOUDINARY_CLOUD_NAME}/video/upload`, { method: "POST", body: formData });
             const data = await res.json();
             if (!data.secure_url) throw new Error("Upload failed");
-            // Voice label also encrypted
             const encLabel = await encryptMessage(`🎙️ Voice message (${duration}s)`, roomId);
-            await addDoc(collection(db, "chats"), {
-                roomId, username,
-                message: encLabel,
-                voiceUrl: data.secure_url,
-                type: "voice",
-                createdAt: new Date(),
-            });
+            await addDoc(collection(db, "chats"), { roomId, username, message: encLabel, voiceUrl: data.secure_url, type: "voice", createdAt: new Date() });
             showToast("Voice message sent! 🎙️", "✅", "#27ae60");
-        } catch (err) {
-            showToast("Voice send fail: " + err.message, "❌", "#e74c3c");
-        }
+        } catch (err) { showToast("Voice send fail: " + err.message, "❌", "#e74c3c"); }
     };
 
     const T = isDark ? {
@@ -873,7 +765,6 @@ function Room() {
             <Toast toasts={toasts} />
             {showHistory && <WatchHistoryModal roomId={roomId} onClose={() => setShowHistory(false)} T={T} />}
 
-            {/* ✅ Fullscreen controls overlay - pointerEvents none so video still clickable */}
             {isFullscreen && (
                 <div style={{ position: "fixed", inset: 0, zIndex: 9000, pointerEvents: "none" }}>
                     <button onClick={() => setIsFullscreen(false)}
@@ -899,7 +790,6 @@ function Room() {
 
             <div style={{ display: "flex", flex: 1, height: "100vh" }}>
                 <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-                    {/* ✅ VideoPlayer renders ONCE - CSS moves it to fullscreen, no unmount/remount */}
                     <div style={isFullscreen
                         ? { position: "fixed", inset: 0, zIndex: 8999, backgroundColor: "#000" }
                         : { flex: 1, backgroundColor: T.playerBg, position: "relative", minHeight: "0", overflow: "hidden" }
@@ -942,10 +832,7 @@ function Room() {
                         <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                             <span style={{ color: T.text3, fontSize: "13px" }}>Room:</span>
                             <span style={{ color: "#ff6b35", fontSize: "13px", fontWeight: "bold" }}>{roomId}</span>
-                            <span style={{ backgroundColor: "rgba(39,174,96,0.15)", color: "#27ae60", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "10px", padding: "2px 8px", fontSize: "11px", fontWeight: "bold" }}>
-                                🔐 Encrypted
-                            </span>
-                            {/* 🟢 Online users */}
+                            <span style={{ backgroundColor: "rgba(39,174,96,0.15)", color: "#27ae60", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "10px", padding: "2px 8px", fontSize: "11px", fontWeight: "bold" }}>🔐 Encrypted</span>
                             {onlineUsers.filter(u => u !== username).map(u => (
                                 <span key={u} style={{ display: "flex", alignItems: "center", gap: "4px", backgroundColor: "rgba(39,174,96,0.12)", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "20px", padding: "2px 10px" }}>
                                     <span style={{ width: "7px", height: "7px", backgroundColor: "#27ae60", borderRadius: "50%", display: "inline-block", animation: "pulse2 2s infinite" }} />
@@ -965,13 +852,9 @@ function Room() {
                                 {showVideoCall ? "📵 Call End" : callStatus === "calling" ? "⏳ Calling..." : "📹 Video Call"}
                             </button>
                             <button onClick={() => setIsFullscreen(true)}
-                                style={{ padding: "8px 14px", backgroundColor: "#8e44ad", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
-                                ⛶ Full Screen
-                            </button>
+                                style={{ padding: "8px 14px", backgroundColor: "#8e44ad", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>⛶ Full Screen</button>
                             <button onClick={() => setShowHistory(true)}
-                                style={{ padding: "8px 14px", backgroundColor: "#2980b9", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
-                                🎬 History
-                            </button>
+                                style={{ padding: "8px 14px", backgroundColor: "#2980b9", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>🎬 History</button>
                             <button onClick={() => setIsDark(!isDark)}
                                 style={{ padding: "8px 14px", backgroundColor: isDark ? "#f39c12" : "#2c3e50", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
                                 {isDark ? "☀️ Light" : "🌙 Dark"}
@@ -981,9 +864,7 @@ function Room() {
                                 {copied ? "✅ Copied!" : "🔗 Copy Link"}
                             </button>
                             <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`🎬 என்னோட கூட movie பாரு! ${window.location.href}`)}`, "_blank")}
-                                style={{ padding: "8px 14px", backgroundColor: "#25D366", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
-                                💬 WhatsApp
-                            </button>
+                                style={{ padding: "8px 14px", backgroundColor: "#25D366", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>💬 WhatsApp</button>
                             <button onClick={() => setShowChat(!showChat)}
                                 style={{ padding: "8px 14px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
                                 {showChat ? "💬 Hide Chat" : "💬 Show Chat"}
@@ -992,14 +873,12 @@ function Room() {
                     </div>
                 </div>
 
-                {/* ✅ Chat panel */}
                 {showChat && (
                     <div style={{ width: "320px", backgroundColor: T.card, display: "flex", flexDirection: "column", borderLeft: `1px solid ${T.border}` }}>
                         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                                 <span style={{ color: T.text, fontWeight: "bold", fontSize: "14px" }}>💬 Chat</span>
                                 <span style={{ backgroundColor: "rgba(39,174,96,0.15)", color: "#27ae60", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "8px", padding: "1px 7px", fontSize: "10px", fontWeight: "bold" }}>🔐 E2E</span>
-                                {/* 🟢 Partner online dot in chat */}
                                 {onlineUsers.filter(u => u !== username).length > 0 ? (
                                     <span style={{ display: "flex", alignItems: "center", gap: "3px" }}>
                                         <span style={{ width: "7px", height: "7px", backgroundColor: "#27ae60", borderRadius: "50%", display: "inline-block", animation: "pulse2 2s infinite" }} />
@@ -1023,24 +902,11 @@ function Room() {
                                 return (
                                     <div key={msg.id}
                                         style={{ maxWidth: "85%", alignSelf: isMe ? "flex-end" : "flex-start", display: "flex", flexDirection: "column", gap: "2px" }}
-                                        onClick={() => {
-                                            if (msg.type !== "voice") {
-                                                setReplyTo({ id: msg.id, username: msg.username, message: msg.message });
-                                            }
-                                        }}>
-                                        {/* Reply preview inside bubble */}
+                                        onClick={() => { if (msg.type !== "voice") setReplyTo({ id: msg.id, username: msg.username, message: msg.message }); }}>
                                         {msg.replyToMessageDecrypted && (
-                                            <div style={{
-                                                backgroundColor: isMe ? "rgba(0,0,0,0.2)" : "rgba(255,255,255,0.1)",
-                                                borderLeft: "3px solid #ff6b35",
-                                                borderRadius: "6px", padding: "4px 8px", marginBottom: "2px",
-                                            }}>
-                                                <p style={{ color: isMe ? "rgba(255,255,255,0.7)" : T.text2, fontSize: "10px", margin: "0 0 2px 0", fontWeight: "bold" }}>
-                                                    ↩ {msg.replyToUsername}
-                                                </p>
-                                                <p style={{ color: isMe ? "rgba(255,255,255,0.6)" : T.text3, fontSize: "11px", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "180px" }}>
-                                                    {msg.replyToMessageDecrypted}
-                                                </p>
+                                            <div style={{ backgroundColor: isMe ? "rgba(0,0,0,0.2)" : "rgba(255,255,255,0.1)", borderLeft: "3px solid #ff6b35", borderRadius: "6px", padding: "4px 8px", marginBottom: "2px" }}>
+                                                <p style={{ color: isMe ? "rgba(255,255,255,0.7)" : T.text2, fontSize: "10px", margin: "0 0 2px 0", fontWeight: "bold" }}>↩ {msg.replyToUsername}</p>
+                                                <p style={{ color: isMe ? "rgba(255,255,255,0.6)" : T.text3, fontSize: "11px", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "180px" }}>{msg.replyToMessageDecrypted}</p>
                                             </div>
                                         )}
                                         <div style={{ padding: "8px 12px", borderRadius: "12px", display: "flex", flexDirection: "column", backgroundColor: isMe ? "#ff6b35" : T.card2, cursor: "pointer", transition: "opacity 0.15s" }}
@@ -1055,7 +921,6 @@ function Room() {
                                             ) : (
                                                 <p style={{ color: "white", fontSize: "14px", margin: 0, wordBreak: "break-word" }}>{msg.message}</p>
                                             )}
-                                            {/* Double tick */}
                                             {isMe && (
                                                 <span style={{ alignSelf: "flex-end", marginTop: "2px", fontSize: "11px", color: isRead ? "#a8e6cf" : "rgba(255,255,255,0.5)" }}>
                                                     {isRead ? "✓✓" : "✓"}
@@ -1082,7 +947,6 @@ function Room() {
 
                         {!showVoiceRecorder && (
                             <div style={{ borderTop: `1px solid ${T.border}` }}>
-                                {/* Reply preview bar */}
                                 {replyTo && (
                                     <div style={{ padding: "6px 12px", backgroundColor: T.card2, display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${T.border}` }}>
                                         <div style={{ display: "flex", alignItems: "center", gap: "6px", flex: 1, minWidth: 0 }}>
@@ -1092,8 +956,7 @@ function Room() {
                                                 <p style={{ color: T.text2, fontSize: "11px", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{replyTo.message}</p>
                                             </div>
                                         </div>
-                                        <button onClick={() => setReplyTo(null)}
-                                            style={{ background: "none", border: "none", color: T.text3, cursor: "pointer", fontSize: "16px", padding: "0 4px", flexShrink: 0 }}>✕</button>
+                                        <button onClick={() => setReplyTo(null)} style={{ background: "none", border: "none", color: T.text3, cursor: "pointer", fontSize: "16px", padding: "0 4px", flexShrink: 0 }}>✕</button>
                                     </div>
                                 )}
                                 <div style={{ padding: "12px", display: "flex", gap: "6px", position: "relative" }}>
@@ -1101,17 +964,13 @@ function Room() {
                                         <EmojiPicker onSelect={handleEmojiSelect} onClose={() => setShowEmojiPicker(false)} />
                                     )}
                                     <button onClick={() => setShowEmojiPicker(p => !p)}
-                                        style={{ padding: "10px", backgroundColor: showEmojiPicker ? "#ff6b35" : T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>
-                                        😊
-                                    </button>
-                                    <input type="text" placeholder={replyTo ? `↩ Replying...` : "Message type பண்ணு..."} value={newMessage}
+                                        style={{ padding: "10px", backgroundColor: showEmojiPicker ? "#ff6b35" : T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>😊</button>
+                                    <input type="text" placeholder={replyTo ? "↩ Replying..." : "Message type பண்ணு..."} value={newMessage}
                                         onChange={handleTyping}
                                         onKeyPress={(e) => e.key === "Enter" && sendMessage()}
                                         style={{ flex: 1, padding: "10px 12px", backgroundColor: T.card2, border: `1px solid ${replyTo ? "#ff6b35" : T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", outline: "none", minWidth: 0 }} />
                                     <button onClick={() => setShowVoiceRecorder(true)}
-                                        style={{ padding: "10px", backgroundColor: T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>
-                                        🎙️
-                                    </button>
+                                        style={{ padding: "10px", backgroundColor: T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>🎙️</button>
                                     <button onClick={() => sendMessage()}
                                         style={{ padding: "10px 14px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>➤</button>
                                 </div>
@@ -1146,11 +1005,9 @@ function Room() {
                 </div>
             )}
 
-            {/* ✅ LiveKitRoom renders ONCE - never unmounts on fullscreen toggle */}
             {showVideoCall && livekitToken && (
                 <LiveKitRoom token={livekitToken} serverUrl={import.meta.env.VITE_LIVEKIT_URL} connect={true} video={true} audio={true} onDisconnected={endVideoCall}>
                     <RoomAudioRenderer />
-                    {/* CallUI always renders - it handles both normal popup and fullscreen overlay internally */}
                     <CallUI isFullscreen={isFullscreen} onEnd={endVideoCall} />
                 </LiveKitRoom>
             )}
