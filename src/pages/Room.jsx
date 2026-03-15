@@ -788,7 +788,7 @@ function Room() {
                 </div>
             )}
 
-            <div style={{ display: "flex", flex: 1, height: "100vh" }}>
+            <div style={{ display: "flex", flex: 1, height: showChat ? "calc(100vh - 50vh)" : "100vh", flexDirection: "column", transition: "height 0.3s ease" }}>
                 <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
                     <div style={isFullscreen
                         ? { position: "fixed", inset: 0, zIndex: 8999, backgroundColor: "#000" }
@@ -885,8 +885,13 @@ function Room() {
                     </div>
                 </div>
 
+                {/* Bottom Sheet Chat */}
                 {showChat && (
-                    <div style={{ width: "320px", backgroundColor: T.card, display: "flex", flexDirection: "column", borderLeft: `1px solid ${T.border}` }}>
+                    <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 500, display: "flex", flexDirection: "column", height: "50vh", backgroundColor: T.card, borderTop: "2px solid #ff6b35", borderRadius: "20px 20px 0 0", boxShadow: "0 -4px 32px rgba(0,0,0,0.5)", animation: "slideUp 0.25s ease" }}>
+                        {/* Drag handle */}
+                        <div style={{ display: "flex", justifyContent: "center", padding: "8px 0 4px 0", cursor: "pointer" }} onClick={() => setShowChat(false)}>
+                            <div style={{ width: "40px", height: "4px", backgroundColor: "#444", borderRadius: "2px" }} />
+                        </div>
                         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                                 <span style={{ color: T.text, fontWeight: "bold", fontSize: "14px" }}>💬 Chat</span>
@@ -990,6 +995,7 @@ function Room() {
                         )}
                     </div>
                 )}
+
             </div>
 
             {incomingCall && (
@@ -1026,6 +1032,7 @@ function Room() {
 
             <style>{`
                 @keyframes floatUp { 0%{transform:translateY(0) scale(1);opacity:1} 100%{transform:translateY(-300px) scale(1.5);opacity:0} }
+                @keyframes slideUp { from{transform:translateY(100%)} to{transform:translateY(0)} }
                 @keyframes pulse { 0%,100%{box-shadow:0 8px 40px rgba(39,174,96,0.3)} 50%{box-shadow:0 8px 60px rgba(39,174,96,0.6)} }
                 @keyframes pulse2 { 0%,100%{opacity:1} 50%{opacity:0.3} }
                 @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
