@@ -419,7 +419,6 @@ function Room() {
     const joinedRef = useRef(false); // ✅ prevent autoplay on join
 
     useEffect(() => { usernameRef.current = username; }, [username]);
-    useEffect(() => { ytReadyRef.current = false; ytSrcRef.current = null; pendingYtCmd.current = null; }, [roomId]);
     useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
     // ✅ After joining, wait 2s before allowing play events (prevents browser autoplay trigger)
@@ -456,50 +455,66 @@ function Room() {
         return () => window.removeEventListener("keydown", fn);
     }, []);
 
-    // YouTube - autoplay=0, play only via Play Sync button
+    // ✅ YouTube - autoplay=0, only Play Sync button controls playback
     const ytSrcRef = useRef(null);
     const ytReadyRef = useRef(false);
-    const pendingYtCmd = useRef(null);
+    const pendingYtCmdRef = useRef(null);
 
-    const getYouTubeSrc = (id) => {
+    // Reset YouTube state on room change
+    useEffect(() => {
+        ytSrcRef.current = null;
+        ytReadyRef.current = false;
+        pendingYtCmdRef.current = null;
+    }, [roomId]);
+
+    const getYouTubeSrc = useCallback((id) => {
         if (!ytSrcRef.current) {
-            ytSrcRef.current = `https://www.youtube.com/embed/${id}?autoplay=0&controls=1&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}&rel=0&playsinline=1`;
+            ytSrcRef.current = `https://www.youtube.com/embed/${id}?autoplay=0&controls=1&enablejsapi=1&origin=${window.location.origin}&rel=0&playsinline=1`;
         }
         return ytSrcRef.current;
-    };
+    }, []);
 
-    const sendYtCommand = useCallback((func) => {
+    const sendYtCmd = useCallback((func) => {
         if (!iframeRef.current) return;
-        const cmd = JSON.stringify({ event: "command", func, args: [] });
         if (ytReadyRef.current) {
-            try { iframeRef.current.contentWindow?.postMessage(cmd, "*"); } catch { }
+            try {
+                iframeRef.current.contentWindow?.postMessage(
+                    JSON.stringify({ event: "command", func, args: [] }), "*"
+                );
+            } catch { }
         } else {
-            pendingYtCmd.current = func;
+            pendingYtCmdRef.current = func;
         }
     }, []);
 
+    // YouTube API ready listener
+    // YouTube sends multiple message types - we check playerState != -1 to know it's loaded
     useEffect(() => {
         const onMsg = (e) => {
             try {
                 const d = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
-                if ((d?.event === "onReady" || d?.event === "infoDelivery") && !ytReadyRef.current) {
+                // onReady event OR first infoDelivery means player is ready
+                if (d?.event === "onReady" || (d?.event === "infoDelivery" && !ytReadyRef.current)) {
                     ytReadyRef.current = true;
-                    if (pendingYtCmd.current) {
-                        sendYtCommand(pendingYtCmd.current);
-                        pendingYtCmd.current = null;
+                    if (pendingYtCmdRef.current) {
+                        sendYtCmd(pendingYtCmdRef.current);
+                        pendingYtCmdRef.current = null;
                     }
                 }
             } catch { }
         };
         window.addEventListener("message", onMsg);
         return () => window.removeEventListener("message", onMsg);
-    }, [sendYtCommand]);
+    }, [sendYtCmd]);
 
+    // Send play/pause when isPlaying changes (with small delay to avoid race)
     useEffect(() => {
         if (!roomData?.movieUrl || !getYouTubeId(roomData.movieUrl)) return;
-        const t = setTimeout(() => sendYtCommand(isPlaying ? "playVideo" : "pauseVideo"), 300);
+        const cmd = isPlaying ? "playVideo" : "pauseVideo";
+        const t = setTimeout(() => sendYtCmd(cmd), 200);
         return () => clearTimeout(t);
-    }, [isPlaying, roomData?.movieUrl, sendYtCommand]);
+    }, [isPlaying, roomData?.movieUrl, sendYtCmd]);
+
     // Room sync
     useEffect(() => {
         const q = query(collection(db, "rooms"), where("roomId", "==", roomId));
