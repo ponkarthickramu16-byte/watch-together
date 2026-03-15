@@ -799,7 +799,19 @@ function Room() {
                                 <iframe ref={iframeRef}
                                     src={getYouTubeSrc(youtubeId)}
                                     style={{ width: "100%", height: "100%", border: "none" }}
-                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen
+                                    onLoad={() => {
+                                        // YouTube iframe loaded - wait 1.5s for API to init, then mark ready
+                                        setTimeout(() => {
+                                            if (!ytReadyRef.current) {
+                                                ytReadyRef.current = true;
+                                                if (pendingYtCmdRef.current) {
+                                                    sendYtCmd(pendingYtCmdRef.current);
+                                                    pendingYtCmdRef.current = null;
+                                                }
+                                            }
+                                        }, 1500);
+                                    }} />
                                 <div style={{ position: "absolute", bottom: "16px", left: "50%", transform: "translateX(-50%)", zIndex: 10 }}>
                                     <button onClick={() => { const p = !isPlaying; setIsPlaying(p); updatePlayState(p); }}
                                         style={{ padding: "8px 24px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", backgroundColor: isPlaying ? "#555" : "#ff6b35" }}>
