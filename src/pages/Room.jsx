@@ -649,383 +649,379 @@ function Room() {
 
         prevOnlineRef.current = onlineUsers;
     }, [onlineUsers, username, nameSet, showToast]);
-    if (!roomDocId) return;
-    isSyncingRef.current = true; // ✅ Bug fix 1
-    setIsSyncing(true);
-    const update = { isPlaying: playing };
-    if (time !== undefined) update.currentTime = time;
-    // Wrap in async function to use await
-    (async () => {
+
+    const updatePlayState = async (playing, time) => {
+        if (!roomDocId) return;
+        isSyncingRef.current = true;
+        setIsSyncing(true);
+        const update = { isPlaying: playing };
+        if (time !== undefined) update.currentTime = time;
         await updateDoc(doc(db, "rooms", roomDocId), update);
         setTimeout(() => { isSyncingRef.current = false; setIsSyncing(false); }, 1000);
-    })();
-};
+    };
 
-const handleSeek = async () => {
-    if (!videoRef.current || !roomDocId) return;
-    isSyncingSeekRef.current = true;
-    await updateDoc(doc(db, "rooms", roomDocId), { currentTime: videoRef.current.currentTime });
-    setTimeout(() => { isSyncingSeekRef.current = false; }, 1500);
-};
+    const handleSeek = async () => {
+        if (!videoRef.current || !roomDocId) return;
+        isSyncingSeekRef.current = true;
+        await updateDoc(doc(db, "rooms", roomDocId), { currentTime: videoRef.current.currentTime });
+        setTimeout(() => { isSyncingSeekRef.current = false; }, 1500);
+    };
 
-const typingWriteRef = useRef(null); // ✅ Bug fix 4
-const handleTyping = async (e) => {
-    setNewMessage(e.target.value);
-    if (!roomDocId) return;
-    // ✅ Bug fix 4: debounce Firestore write - don't write on every keystroke
-    clearTimeout(typingWriteRef.current);
-    typingWriteRef.current = setTimeout(async () => {
-        await updateDoc(doc(db, "rooms", roomDocId), { typing: username }).catch(() => { });
-    }, 300);
-    clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(async () => {
-        await updateDoc(doc(db, "rooms", roomDocId), { typing: "" }).catch(() => { });
-    }, 2000);
-};
+    const typingWriteRef = useRef(null);
+    const handleTyping = async (e) => {
+        setNewMessage(e.target.value);
+        if (!roomDocId) return;
+        clearTimeout(typingWriteRef.current);
+        typingWriteRef.current = setTimeout(async () => {
+            await updateDoc(doc(db, "rooms", roomDocId), { typing: username }).catch(() => { });
+        }, 300);
+        clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = setTimeout(async () => {
+            await updateDoc(doc(db, "rooms", roomDocId), { typing: "" }).catch(() => { });
+        }, 2000);
+    };
 
-const fetchToken = async () => {
-    const url = `/api/token?roomName=room-${roomId}&participantName=${encodeURIComponent(username)}`;
-    const r = await fetch(url);
-    if (!r.ok) { const err = await r.json().catch(() => ({})); throw new Error(err.error || "Token fetch failed"); }
-    const d = await r.json();
-    if (!d.token) throw new Error("No token received");
-    return d.token;
-};
+    const fetchToken = async () => {
+        const url = `/api/token?roomName=room-${roomId}&participantName=${encodeURIComponent(username)}`;
+        const r = await fetch(url);
+        if (!r.ok) { const err = await r.json().catch(() => ({})); throw new Error(err.error || "Token fetch failed"); }
+        const d = await r.json();
+        if (!d.token) throw new Error("No token received");
+        return d.token;
+    };
 
-const startVideoCall = async () => {
-    try {
-        setCallStatus("calling");
-        if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "calling", callBy: username });
-        const token = await fetchToken();
-        setLivekitToken(token); setShowVideoCall(true); setCallStatus("in-call");
-    } catch (err) { setCallStatus(null); alert("Video call start ஆகல: " + err.message); }
-};
+    const startVideoCall = async () => {
+        try {
+            setCallStatus("calling");
+            if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "calling", callBy: username });
+            const token = await fetchToken();
+            setLivekitToken(token); setShowVideoCall(true); setCallStatus("in-call");
+        } catch (err) { setCallStatus(null); alert("Video call start ஆகல: " + err.message); }
+    };
 
-const acceptCall = async () => {
-    setIncomingCall(false); setAcceptLoading(true); setCallStatus("in-call");
-    try {
-        if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "in-call" });
-        const token = await fetchToken();
-        setLivekitToken(token); setShowVideoCall(true);
-    } catch (err) { setCallStatus(null); alert("❌ Call accept ஆகல: " + err.message); }
-    finally { setAcceptLoading(false); }
-};
+    const acceptCall = async () => {
+        setIncomingCall(false); setAcceptLoading(true); setCallStatus("in-call");
+        try {
+            if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "in-call" });
+            const token = await fetchToken();
+            setLivekitToken(token); setShowVideoCall(true);
+        } catch (err) { setCallStatus(null); alert("❌ Call accept ஆகல: " + err.message); }
+        finally { setAcceptLoading(false); }
+    };
 
-const rejectCall = async () => { setIncomingCall(false); if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "ended", callBy: username }); };
-const endVideoCall = async () => { setShowVideoCall(false); setLivekitToken(null); setCallStatus(null); if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "ended", callBy: username }); };
-const sendReaction = async (emoji) => { await addDoc(collection(db, "reactions"), { roomId, emoji, username, createdAt: new Date() }); };
-const handleEmojiSelect = (emoji) => { setNewMessage(prev => prev + emoji); };
+    const rejectCall = async () => { setIncomingCall(false); if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "ended", callBy: username }); };
+    const endVideoCall = async () => { setShowVideoCall(false); setLivekitToken(null); setCallStatus(null); if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "ended", callBy: username }); };
+    const sendReaction = async (emoji) => { await addDoc(collection(db, "reactions"), { roomId, emoji, username, createdAt: new Date() }); };
+    const handleEmojiSelect = (emoji) => { setNewMessage(prev => prev + emoji); };
 
-// ✅ Send message - ENCRYPTED
-const sendMessage = async (msg) => {
-    const text = msg || newMessage.trim();
-    if (!text) return;
-    if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { typing: "" }).catch(() => { });
-    clearTimeout(typingTimeoutRef.current);
-    // Encrypt before storing
-    const encrypted = await encryptMessage(text, roomId);
-    await addDoc(collection(db, "chats"), { roomId, username, message: encrypted, createdAt: new Date() });
-    if (!msg) setNewMessage("");
-};
+    const sendMessage = async (msg) => {
+        const text = msg || newMessage.trim();
+        if (!text) return;
+        if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { typing: "" }).catch(() => { });
+        clearTimeout(typingTimeoutRef.current);
+        const encrypted = await encryptMessage(text, roomId);
+        await addDoc(collection(db, "chats"), { roomId, username, message: encrypted, createdAt: new Date() });
+        if (!msg) setNewMessage("");
+    };
 
-// ✅ Voice message send
-const handleVoiceSend = async (audioBlob, duration) => {
-    setShowVoiceRecorder(false);
-    try {
-        showToast("Voice message upload ஆகுது...", "🎙️", "#8e44ad");
-        const formData = new FormData();
-        formData.append("file", audioBlob, "voice.webm");
-        formData.append("upload_preset", import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET);
-        formData.append("folder", "voice-messages");
-        formData.append("resource_type", "video");
-        const res = await fetch(`https://api.cloudinary.com/v1_1/${import.meta.env.VITE_CLOUDINARY_CLOUD_NAME}/video/upload`, { method: "POST", body: formData });
-        const data = await res.json();
-        if (!data.secure_url) throw new Error("Upload failed");
-        // Voice label also encrypted
-        const encLabel = await encryptMessage(`🎙️ Voice message (${duration}s)`, roomId);
-        await addDoc(collection(db, "chats"), {
-            roomId, username,
-            message: encLabel,
-            voiceUrl: data.secure_url,
-            type: "voice",
-            createdAt: new Date(),
-        });
-        showToast("Voice message sent! 🎙️", "✅", "#27ae60");
-    } catch (err) {
-        showToast("Voice send fail: " + err.message, "❌", "#e74c3c");
+    // ✅ Voice message send
+    const handleVoiceSend = async (audioBlob, duration) => {
+        setShowVoiceRecorder(false);
+        try {
+            showToast("Voice message upload ஆகுது...", "🎙️", "#8e44ad");
+            const formData = new FormData();
+            formData.append("file", audioBlob, "voice.webm");
+            formData.append("upload_preset", import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET);
+            formData.append("folder", "voice-messages");
+            formData.append("resource_type", "video");
+            const res = await fetch(`https://api.cloudinary.com/v1_1/${import.meta.env.VITE_CLOUDINARY_CLOUD_NAME}/video/upload`, { method: "POST", body: formData });
+            const data = await res.json();
+            if (!data.secure_url) throw new Error("Upload failed");
+            // Voice label also encrypted
+            const encLabel = await encryptMessage(`🎙️ Voice message (${duration}s)`, roomId);
+            await addDoc(collection(db, "chats"), {
+                roomId, username,
+                message: encLabel,
+                voiceUrl: data.secure_url,
+                type: "voice",
+                createdAt: new Date(),
+            });
+            showToast("Voice message sent! 🎙️", "✅", "#27ae60");
+        } catch (err) {
+            showToast("Voice send fail: " + err.message, "❌", "#e74c3c");
+        }
+    };
+
+    const T = isDark ? {
+        bg: "#0f0f0f", card: "#1a1a1a", card2: "#2a2a2a",
+        border: "#333", text: "white", text2: "#aaa", text3: "#666",
+        playerBg: "#000", reactionBg: "#111",
+    } : {
+        bg: "#f5f5f5", card: "#ffffff", card2: "#eeeeee",
+        border: "#ddd", text: "#111111", text2: "#555555", text3: "#888888",
+        playerBg: "#222", reactionBg: "#e8e8e8",
+    };
+
+    if (!nameSet) {
+        return (
+            <div style={{ backgroundColor: T.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ backgroundColor: T.card, borderRadius: "16px", padding: "40px", width: "100%", maxWidth: "380px", textAlign: "center", border: `1px solid ${T.border}` }}>
+                    <h2 style={{ color: T.text, fontSize: "24px", marginBottom: "24px" }}>👋 உன் பேர் என்ன?</h2>
+                    <input type="text" placeholder="உன் பேர் type பண்ணு..." value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        onKeyPress={(e) => e.key === "Enter" && username.trim() && setNameSet(true)}
+                        style={{ width: "100%", padding: "12px 16px", backgroundColor: T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "16px", marginBottom: "16px", boxSizing: "border-box", outline: "none" }}
+                        autoFocus />
+                    <button onClick={() => username.trim() && setNameSet(true)}
+                        style={{ width: "100%", padding: "14px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", fontSize: "16px", cursor: "pointer", fontWeight: "bold" }}>
+                        🚀 Join Room
+                    </button>
+                </div>
+            </div>
+        );
     }
-};
 
-const T = isDark ? {
-    bg: "#0f0f0f", card: "#1a1a1a", card2: "#2a2a2a",
-    border: "#333", text: "white", text2: "#aaa", text3: "#666",
-    playerBg: "#000", reactionBg: "#111",
-} : {
-    bg: "#f5f5f5", card: "#ffffff", card2: "#eeeeee",
-    border: "#ddd", text: "#111111", text2: "#555555", text3: "#888888",
-    playerBg: "#222", reactionBg: "#e8e8e8",
-};
+    if (!roomData) return <div style={{ backgroundColor: T.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: T.text, fontSize: "18px" }}><p>⏳ Room load ஆகுது...</p></div>;
 
-if (!nameSet) {
+    const youtubeId = getYouTubeId(roomData.movieUrl);
+
     return (
-        <div style={{ backgroundColor: T.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <div style={{ backgroundColor: T.card, borderRadius: "16px", padding: "40px", width: "100%", maxWidth: "380px", textAlign: "center", border: `1px solid ${T.border}` }}>
-                <h2 style={{ color: T.text, fontSize: "24px", marginBottom: "24px" }}>👋 உன் பேர் என்ன?</h2>
-                <input type="text" placeholder="உன் பேர் type பண்ணு..." value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    onKeyPress={(e) => e.key === "Enter" && username.trim() && setNameSet(true)}
-                    style={{ width: "100%", padding: "12px 16px", backgroundColor: T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "16px", marginBottom: "16px", boxSizing: "border-box", outline: "none" }}
-                    autoFocus />
-                <button onClick={() => username.trim() && setNameSet(true)}
-                    style={{ width: "100%", padding: "14px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", fontSize: "16px", cursor: "pointer", fontWeight: "bold" }}>
-                    🚀 Join Room
-                </button>
-            </div>
-        </div>
-    );
-}
+        <div style={{ backgroundColor: T.bg, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+            <Toast toasts={toasts} />
+            {showHistory && <WatchHistoryModal roomId={roomId} onClose={() => setShowHistory(false)} T={T} />}
 
-if (!roomData) return <div style={{ backgroundColor: T.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: T.text, fontSize: "18px" }}><p>⏳ Room load ஆகுது...</p></div>;
-
-const youtubeId = getYouTubeId(roomData.movieUrl);
-
-return (
-    <div style={{ backgroundColor: T.bg, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-        <Toast toasts={toasts} />
-        {showHistory && <WatchHistoryModal roomId={roomId} onClose={() => setShowHistory(false)} T={T} />}
-
-        {/* ✅ Fullscreen controls overlay - pointerEvents none so video still clickable */}
-        {isFullscreen && (
-            <div style={{ position: "fixed", inset: 0, zIndex: 9000, pointerEvents: "none" }}>
-                <button onClick={() => setIsFullscreen(false)}
-                    style={{ position: "absolute", top: "16px", left: "16px", padding: "8px 16px", backgroundColor: "rgba(0,0,0,0.75)", color: "white", border: "1px solid #555", borderRadius: "8px", cursor: "pointer", fontSize: "13px", zIndex: 9100, pointerEvents: "all" }}>
-                    ✕ Exit
-                </button>
-                <div style={{ position: "absolute", bottom: "20px", left: "20px", display: "flex", gap: "8px", zIndex: 9100, pointerEvents: "all" }}>
-                    {REACTIONS.map((emoji) => (
-                        <button key={emoji} onClick={() => sendReaction(emoji)}
-                            style={{ fontSize: "24px", backgroundColor: "rgba(0,0,0,0.5)", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>{emoji}</button>
-                    ))}
-                </div>
-                {!showVideoCall && (
-                    <div style={{ position: "absolute", bottom: "24px", right: "24px", zIndex: 9100, pointerEvents: "all" }}>
-                        <button onClick={startVideoCall}
-                            style={{ padding: "10px 18px", backgroundColor: "#27ae60", color: "white", border: "none", borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "bold" }}>
-                            📹 Face Cam Start
-                        </button>
-                    </div>
-                )}
-            </div>
-        )}
-
-        <div style={{ display: "flex", flex: 1, height: "100vh" }}>
-            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-                {/* ✅ VideoPlayer renders ONCE - CSS moves it to fullscreen, no unmount/remount */}
-                <div style={isFullscreen
-                    ? { position: "fixed", inset: 0, zIndex: 8999, backgroundColor: "#000" }
-                    : { flex: 1, backgroundColor: T.playerBg, position: "relative", minHeight: "0", overflow: "hidden" }
-                }>
-                    {youtubeId ? (
-                        <div style={{ width: "100%", height: "100%", position: "relative" }}>
-                            <iframe ref={iframeRef}
-                                src={getYouTubeSrc(youtubeId)}
-                                style={{ width: "100%", height: "100%", border: "none" }}
-                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
-                            <div style={{ position: "absolute", bottom: "16px", left: "50%", transform: "translateX(-50%)", zIndex: 10 }}>
-                                <button onClick={() => { const p = !isPlaying; setIsPlaying(p); updatePlayState(p); }}
-                                    style={{ padding: "8px 24px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", backgroundColor: isPlaying ? "#555" : "#ff6b35" }}>
-                                    {isPlaying ? "⏸ Pause Sync" : "▶ Play Sync"}
-                                </button>
-                            </div>
-                        </div>
-                    ) : (
-                        <video ref={videoRef} src={roomData.movieUrl} controls style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
-                            onPlay={() => updatePlayState(true, videoRef.current?.currentTime)}
-                            onPause={() => updatePlayState(false, videoRef.current?.currentTime)}
-                            onSeeked={handleSeek} />
-                    )}
-                    {floatingReactions.map((r) => (
-                        <div key={r.id} style={{ position: "absolute", bottom: "20px", left: `${r.x}%`, fontSize: "40px", animation: "floatUp 3s ease-out forwards", pointerEvents: "none", zIndex: 10 }}>{r.emoji}</div>
-                    ))}
-                </div>
-
-                <div style={{ backgroundColor: T.reactionBg, padding: "8px 16px", display: "flex", gap: "6px", justifyContent: "center", alignItems: "center", borderTop: `1px solid ${T.border}` }}>
-                    {REACTIONS.map((emoji) => (
-                        <button key={emoji} onClick={() => sendReaction(emoji)}
-                            style={{ fontSize: "26px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>{emoji}</button>
-                    ))}
-                    <button onClick={() => sendReaction("🎬")} style={{ fontSize: "22px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>🎬</button>
-                    <button onClick={() => sendReaction("🥺")} style={{ fontSize: "22px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>🥺</button>
-                    <button onClick={() => sendReaction("💕")} style={{ fontSize: "22px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>💕</button>
-                </div>
-
-                <div style={{ backgroundColor: T.card, padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px", borderTop: `1px solid ${T.border}` }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                        <span style={{ color: T.text3, fontSize: "13px" }}>Room:</span>
-                        <span style={{ color: "#ff6b35", fontSize: "13px", fontWeight: "bold" }}>{roomId}</span>
-                        <span style={{ backgroundColor: "rgba(39,174,96,0.15)", color: "#27ae60", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "10px", padding: "2px 8px", fontSize: "11px", fontWeight: "bold" }}>
-                            🔐 Encrypted
-                        </span>
-                        {/* 🟢 Online users */}
-                        {onlineUsers.filter(u => u !== username).map(u => (
-                            <span key={u} style={{ display: "flex", alignItems: "center", gap: "4px", backgroundColor: "rgba(39,174,96,0.12)", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "20px", padding: "2px 10px" }}>
-                                <span style={{ width: "7px", height: "7px", backgroundColor: "#27ae60", borderRadius: "50%", display: "inline-block", animation: "pulse2 2s infinite" }} />
-                                <span style={{ color: "#27ae60", fontSize: "11px", fontWeight: "bold" }}>{u} Online</span>
-                            </span>
+            {/* ✅ Fullscreen controls overlay - pointerEvents none so video still clickable */}
+            {isFullscreen && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 9000, pointerEvents: "none" }}>
+                    <button onClick={() => setIsFullscreen(false)}
+                        style={{ position: "absolute", top: "16px", left: "16px", padding: "8px 16px", backgroundColor: "rgba(0,0,0,0.75)", color: "white", border: "1px solid #555", borderRadius: "8px", cursor: "pointer", fontSize: "13px", zIndex: 9100, pointerEvents: "all" }}>
+                        ✕ Exit
+                    </button>
+                    <div style={{ position: "absolute", bottom: "20px", left: "20px", display: "flex", gap: "8px", zIndex: 9100, pointerEvents: "all" }}>
+                        {REACTIONS.map((emoji) => (
+                            <button key={emoji} onClick={() => sendReaction(emoji)}
+                                style={{ fontSize: "24px", backgroundColor: "rgba(0,0,0,0.5)", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>{emoji}</button>
                         ))}
-                        {onlineUsers.filter(u => u !== username).length === 0 && nameSet && (
-                            <span style={{ display: "flex", alignItems: "center", gap: "4px", backgroundColor: "rgba(150,150,150,0.1)", border: "1px solid #333", borderRadius: "20px", padding: "2px 10px" }}>
-                                <span style={{ width: "7px", height: "7px", backgroundColor: "#666", borderRadius: "50%", display: "inline-block" }} />
-                                <span style={{ color: "#666", fontSize: "11px" }}>Partner Offline</span>
-                            </span>
-                        )}
                     </div>
-                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                        <button onClick={showVideoCall ? endVideoCall : startVideoCall} disabled={callStatus === "calling"}
-                            style={{ padding: "8px 14px", backgroundColor: showVideoCall ? "#e74c3c" : callStatus === "calling" ? "#666" : "#27ae60", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
-                            {showVideoCall ? "📵 Call End" : callStatus === "calling" ? "⏳ Calling..." : "📹 Video Call"}
-                        </button>
-                        <button onClick={() => setIsFullscreen(true)}
-                            style={{ padding: "8px 14px", backgroundColor: "#8e44ad", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
-                            ⛶ Full Screen
-                        </button>
-                        <button onClick={() => setShowHistory(true)}
-                            style={{ padding: "8px 14px", backgroundColor: "#2980b9", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
-                            🎬 History
-                        </button>
-                        <button onClick={() => setIsDark(!isDark)}
-                            style={{ padding: "8px 14px", backgroundColor: isDark ? "#f39c12" : "#2c3e50", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
-                            {isDark ? "☀️ Light" : "🌙 Dark"}
-                        </button>
-                        <button onClick={() => { navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-                            style={{ padding: "8px 14px", backgroundColor: T.card2, color: T.text, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
-                            {copied ? "✅ Copied!" : "🔗 Copy Link"}
-                        </button>
-                        <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`🎬 என்னோட கூட movie பாரு! ${window.location.href}`)}`, "_blank")}
-                            style={{ padding: "8px 14px", backgroundColor: "#25D366", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
-                            💬 WhatsApp
-                        </button>
-                        <button onClick={() => setShowChat(!showChat)}
-                            style={{ padding: "8px 14px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
-                            {showChat ? "💬 Hide Chat" : "💬 Show Chat"}
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            {/* ✅ Chat panel */}
-            {showChat && (
-                <div style={{ width: "320px", backgroundColor: T.card, display: "flex", flexDirection: "column", borderLeft: `1px solid ${T.border}` }}>
-                    <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                            <span style={{ color: T.text, fontWeight: "bold", fontSize: "14px" }}>💬 Chat</span>
-                            <span style={{ backgroundColor: "rgba(39,174,96,0.15)", color: "#27ae60", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "8px", padding: "1px 7px", fontSize: "10px", fontWeight: "bold" }}>🔐 E2E</span>
-                            {/* 🟢 Partner online dot in chat */}
-                            {onlineUsers.filter(u => u !== username).length > 0 ? (
-                                <span style={{ display: "flex", alignItems: "center", gap: "3px" }}>
-                                    <span style={{ width: "7px", height: "7px", backgroundColor: "#27ae60", borderRadius: "50%", display: "inline-block", animation: "pulse2 2s infinite" }} />
-                                    <span style={{ color: "#27ae60", fontSize: "10px", fontWeight: "bold" }}>Online</span>
-                                </span>
-                            ) : (
-                                <span style={{ display: "flex", alignItems: "center", gap: "3px" }}>
-                                    <span style={{ width: "7px", height: "7px", backgroundColor: "#555", borderRadius: "50%", display: "inline-block" }} />
-                                    <span style={{ color: "#555", fontSize: "10px" }}>Offline</span>
-                                </span>
-                            )}
-                        </div>
-                        <span style={{ color: "#ff6b35", fontSize: "13px" }}>👤 {username}</span>
-                    </div>
-
-                    <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                        {messages.length === 0 && <p style={{ color: T.text3, textAlign: "center", fontSize: "13px" }}>message இல்ல - first message பண்ணு! 👋</p>}
-                        {messages.map((msg) => (
-                            <div key={msg.id} style={{ maxWidth: "85%", padding: "8px 12px", borderRadius: "12px", display: "flex", flexDirection: "column", alignSelf: msg.username === username ? "flex-end" : "flex-start", backgroundColor: msg.username === username ? "#ff6b35" : T.card2 }}>
-                                {msg.username !== username && <p style={{ color: T.text2, fontSize: "11px", margin: "0 0 4px 0" }}>{msg.username}</p>}
-                                {msg.type === "voice" && msg.voiceUrl ? (
-                                    <div>
-                                        <p style={{ color: "rgba(255,255,255,0.8)", fontSize: "11px", margin: "0 0 4px 0" }}>🎙️ Voice message</p>
-                                        <audio src={msg.voiceUrl} controls style={{ width: "180px", height: "28px" }} />
-                                    </div>
-                                ) : (
-                                    <p style={{ color: T.text, fontSize: "14px", margin: 0, wordBreak: "break-word" }}>{msg.message}</p>
-                                )}
-                            </div>
-                        ))}
-                        {partnerTyping && (
-                            <div style={{ alignSelf: "flex-start", backgroundColor: T.card2, padding: "8px 14px", borderRadius: "12px", display: "flex", alignItems: "center", gap: "6px" }}>
-                                <span style={{ color: T.text2, fontSize: "12px" }}>type பண்றாங்க</span>
-                                <span style={{ display: "flex", gap: "3px" }}>
-                                    {[0, 1, 2].map(i => <span key={i} style={{ width: "6px", height: "6px", backgroundColor: "#ff6b35", borderRadius: "50%", display: "inline-block", animation: `typingDot 1.2s ${i * 0.2}s infinite` }} />)}
-                                </span>
-                            </div>
-                        )}
-                        <div ref={chatEndRef} />
-                    </div>
-
-                    {showVoiceRecorder && (
-                        <VoiceRecorder onSend={handleVoiceSend} onCancel={() => setShowVoiceRecorder(false)} T={T} />
-                    )}
-
-                    {!showVoiceRecorder && (
-                        <div style={{ padding: "12px", borderTop: `1px solid ${T.border}`, display: "flex", gap: "6px", position: "relative" }}>
-                            {showEmojiPicker && (
-                                <EmojiPicker onSelect={handleEmojiSelect} onClose={() => setShowEmojiPicker(false)} />
-                            )}
-                            <button onClick={() => setShowEmojiPicker(p => !p)}
-                                style={{ padding: "10px", backgroundColor: showEmojiPicker ? "#ff6b35" : T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>
-                                😊
+                    {!showVideoCall && (
+                        <div style={{ position: "absolute", bottom: "24px", right: "24px", zIndex: 9100, pointerEvents: "all" }}>
+                            <button onClick={startVideoCall}
+                                style={{ padding: "10px 18px", backgroundColor: "#27ae60", color: "white", border: "none", borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "bold" }}>
+                                📹 Face Cam Start
                             </button>
-                            <input type="text" placeholder="Message type பண்ணு..." value={newMessage}
-                                onChange={handleTyping}
-                                onKeyPress={(e) => e.key === "Enter" && sendMessage()}
-                                style={{ flex: 1, padding: "10px 12px", backgroundColor: T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", outline: "none", minWidth: 0 }} />
-                            <button onClick={() => setShowVoiceRecorder(true)}
-                                style={{ padding: "10px", backgroundColor: T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>
-                                🎙️
-                            </button>
-                            <button onClick={() => sendMessage()}
-                                style={{ padding: "10px 14px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>➤</button>
                         </div>
                     )}
                 </div>
             )}
-        </div>
 
-        {incomingCall && (
-            <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.75)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <div style={{ backgroundColor: T.card, borderRadius: "20px", border: "2px solid #27ae60", padding: "40px", textAlign: "center", animation: "pulse 1.5s infinite" }}>
-                    <div style={{ fontSize: "56px", marginBottom: "8px" }}>📹</div>
-                    <p style={{ color: T.text, fontSize: "20px", fontWeight: "bold", margin: "0 0 8px 0" }}>Incoming Video Call!</p>
-                    <p style={{ color: T.text2, fontSize: "14px", margin: "0 0 28px 0" }}>{callerName} call பண்றாங்க... 💕</p>
-                    <div style={{ display: "flex", gap: "16px", justifyContent: "center" }}>
-                        <button onClick={acceptCall} style={{ padding: "14px 32px", backgroundColor: "#27ae60", color: "white", border: "none", borderRadius: "12px", fontSize: "16px", cursor: "pointer", fontWeight: "bold" }}>✅ Accept</button>
-                        <button onClick={rejectCall} style={{ padding: "14px 32px", backgroundColor: "#e74c3c", color: "white", border: "none", borderRadius: "12px", fontSize: "16px", cursor: "pointer", fontWeight: "bold" }}>❌ Reject</button>
+            <div style={{ display: "flex", flex: 1, height: "100vh" }}>
+                <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+                    {/* ✅ VideoPlayer renders ONCE - CSS moves it to fullscreen, no unmount/remount */}
+                    <div style={isFullscreen
+                        ? { position: "fixed", inset: 0, zIndex: 8999, backgroundColor: "#000" }
+                        : { flex: 1, backgroundColor: T.playerBg, position: "relative", minHeight: "0", overflow: "hidden" }
+                    }>
+                        {youtubeId ? (
+                            <div style={{ width: "100%", height: "100%", position: "relative" }}>
+                                <iframe ref={iframeRef}
+                                    src={getYouTubeSrc(youtubeId)}
+                                    style={{ width: "100%", height: "100%", border: "none" }}
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
+                                <div style={{ position: "absolute", bottom: "16px", left: "50%", transform: "translateX(-50%)", zIndex: 10 }}>
+                                    <button onClick={() => { const p = !isPlaying; setIsPlaying(p); updatePlayState(p); }}
+                                        style={{ padding: "8px 24px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", backgroundColor: isPlaying ? "#555" : "#ff6b35" }}>
+                                        {isPlaying ? "⏸ Pause Sync" : "▶ Play Sync"}
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <video ref={videoRef} src={roomData.movieUrl} controls style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
+                                onPlay={() => updatePlayState(true, videoRef.current?.currentTime)}
+                                onPause={() => updatePlayState(false, videoRef.current?.currentTime)}
+                                onSeeked={handleSeek} />
+                        )}
+                        {floatingReactions.map((r) => (
+                            <div key={r.id} style={{ position: "absolute", bottom: "20px", left: `${r.x}%`, fontSize: "40px", animation: "floatUp 3s ease-out forwards", pointerEvents: "none", zIndex: 10 }}>{r.emoji}</div>
+                        ))}
+                    </div>
+
+                    <div style={{ backgroundColor: T.reactionBg, padding: "8px 16px", display: "flex", gap: "6px", justifyContent: "center", alignItems: "center", borderTop: `1px solid ${T.border}` }}>
+                        {REACTIONS.map((emoji) => (
+                            <button key={emoji} onClick={() => sendReaction(emoji)}
+                                style={{ fontSize: "26px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>{emoji}</button>
+                        ))}
+                        <button onClick={() => sendReaction("🎬")} style={{ fontSize: "22px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>🎬</button>
+                        <button onClick={() => sendReaction("🥺")} style={{ fontSize: "22px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>🥺</button>
+                        <button onClick={() => sendReaction("💕")} style={{ fontSize: "22px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>💕</button>
+                    </div>
+
+                    <div style={{ backgroundColor: T.card, padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px", borderTop: `1px solid ${T.border}` }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                            <span style={{ color: T.text3, fontSize: "13px" }}>Room:</span>
+                            <span style={{ color: "#ff6b35", fontSize: "13px", fontWeight: "bold" }}>{roomId}</span>
+                            <span style={{ backgroundColor: "rgba(39,174,96,0.15)", color: "#27ae60", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "10px", padding: "2px 8px", fontSize: "11px", fontWeight: "bold" }}>
+                                🔐 Encrypted
+                            </span>
+                            {/* 🟢 Online users */}
+                            {onlineUsers.filter(u => u !== username).map(u => (
+                                <span key={u} style={{ display: "flex", alignItems: "center", gap: "4px", backgroundColor: "rgba(39,174,96,0.12)", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "20px", padding: "2px 10px" }}>
+                                    <span style={{ width: "7px", height: "7px", backgroundColor: "#27ae60", borderRadius: "50%", display: "inline-block", animation: "pulse2 2s infinite" }} />
+                                    <span style={{ color: "#27ae60", fontSize: "11px", fontWeight: "bold" }}>{u} Online</span>
+                                </span>
+                            ))}
+                            {onlineUsers.filter(u => u !== username).length === 0 && nameSet && (
+                                <span style={{ display: "flex", alignItems: "center", gap: "4px", backgroundColor: "rgba(150,150,150,0.1)", border: "1px solid #333", borderRadius: "20px", padding: "2px 10px" }}>
+                                    <span style={{ width: "7px", height: "7px", backgroundColor: "#666", borderRadius: "50%", display: "inline-block" }} />
+                                    <span style={{ color: "#666", fontSize: "11px" }}>Partner Offline</span>
+                                </span>
+                            )}
+                        </div>
+                        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                            <button onClick={showVideoCall ? endVideoCall : startVideoCall} disabled={callStatus === "calling"}
+                                style={{ padding: "8px 14px", backgroundColor: showVideoCall ? "#e74c3c" : callStatus === "calling" ? "#666" : "#27ae60", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
+                                {showVideoCall ? "📵 Call End" : callStatus === "calling" ? "⏳ Calling..." : "📹 Video Call"}
+                            </button>
+                            <button onClick={() => setIsFullscreen(true)}
+                                style={{ padding: "8px 14px", backgroundColor: "#8e44ad", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
+                                ⛶ Full Screen
+                            </button>
+                            <button onClick={() => setShowHistory(true)}
+                                style={{ padding: "8px 14px", backgroundColor: "#2980b9", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
+                                🎬 History
+                            </button>
+                            <button onClick={() => setIsDark(!isDark)}
+                                style={{ padding: "8px 14px", backgroundColor: isDark ? "#f39c12" : "#2c3e50", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
+                                {isDark ? "☀️ Light" : "🌙 Dark"}
+                            </button>
+                            <button onClick={() => { navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+                                style={{ padding: "8px 14px", backgroundColor: T.card2, color: T.text, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
+                                {copied ? "✅ Copied!" : "🔗 Copy Link"}
+                            </button>
+                            <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`🎬 என்னோட கூட movie பாரு! ${window.location.href}`)}`, "_blank")}
+                                style={{ padding: "8px 14px", backgroundColor: "#25D366", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
+                                💬 WhatsApp
+                            </button>
+                            <button onClick={() => setShowChat(!showChat)}
+                                style={{ padding: "8px 14px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
+                                {showChat ? "💬 Hide Chat" : "💬 Show Chat"}
+                            </button>
+                        </div>
                     </div>
                 </div>
-            </div>
-        )}
 
-        {acceptLoading && (
-            <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.75)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <div style={{ backgroundColor: T.card, borderRadius: "20px", border: "2px solid #ff6b35", padding: "40px", textAlign: "center" }}>
-                    <div style={{ fontSize: "48px", marginBottom: "12px" }}>⏳</div>
-                    <p style={{ color: T.text, fontSize: "18px", fontWeight: "bold", margin: "0 0 8px 0" }}>Call connect ஆகுது...</p>
-                    <p style={{ color: T.text2, fontSize: "13px", margin: "0 0 20px 0" }}>சில seconds wait பண்ணு 🙏</p>
-                    <div style={{ width: "40px", height: "40px", border: "3px solid #333", borderTop: "3px solid #ff6b35", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto" }} />
+                {/* ✅ Chat panel */}
+                {showChat && (
+                    <div style={{ width: "320px", backgroundColor: T.card, display: "flex", flexDirection: "column", borderLeft: `1px solid ${T.border}` }}>
+                        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                <span style={{ color: T.text, fontWeight: "bold", fontSize: "14px" }}>💬 Chat</span>
+                                <span style={{ backgroundColor: "rgba(39,174,96,0.15)", color: "#27ae60", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "8px", padding: "1px 7px", fontSize: "10px", fontWeight: "bold" }}>🔐 E2E</span>
+                                {/* 🟢 Partner online dot in chat */}
+                                {onlineUsers.filter(u => u !== username).length > 0 ? (
+                                    <span style={{ display: "flex", alignItems: "center", gap: "3px" }}>
+                                        <span style={{ width: "7px", height: "7px", backgroundColor: "#27ae60", borderRadius: "50%", display: "inline-block", animation: "pulse2 2s infinite" }} />
+                                        <span style={{ color: "#27ae60", fontSize: "10px", fontWeight: "bold" }}>Online</span>
+                                    </span>
+                                ) : (
+                                    <span style={{ display: "flex", alignItems: "center", gap: "3px" }}>
+                                        <span style={{ width: "7px", height: "7px", backgroundColor: "#555", borderRadius: "50%", display: "inline-block" }} />
+                                        <span style={{ color: "#555", fontSize: "10px" }}>Offline</span>
+                                    </span>
+                                )}
+                            </div>
+                            <span style={{ color: "#ff6b35", fontSize: "13px" }}>👤 {username}</span>
+                        </div>
+
+                        <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                            {messages.length === 0 && <p style={{ color: T.text3, textAlign: "center", fontSize: "13px" }}>message இல்ல - first message பண்ணு! 👋</p>}
+                            {messages.map((msg) => (
+                                <div key={msg.id} style={{ maxWidth: "85%", padding: "8px 12px", borderRadius: "12px", display: "flex", flexDirection: "column", alignSelf: msg.username === username ? "flex-end" : "flex-start", backgroundColor: msg.username === username ? "#ff6b35" : T.card2 }}>
+                                    {msg.username !== username && <p style={{ color: T.text2, fontSize: "11px", margin: "0 0 4px 0" }}>{msg.username}</p>}
+                                    {msg.type === "voice" && msg.voiceUrl ? (
+                                        <div>
+                                            <p style={{ color: "rgba(255,255,255,0.8)", fontSize: "11px", margin: "0 0 4px 0" }}>🎙️ Voice message</p>
+                                            <audio src={msg.voiceUrl} controls style={{ width: "180px", height: "28px" }} />
+                                        </div>
+                                    ) : (
+                                        <p style={{ color: T.text, fontSize: "14px", margin: 0, wordBreak: "break-word" }}>{msg.message}</p>
+                                    )}
+                                </div>
+                            ))}
+                            {partnerTyping && (
+                                <div style={{ alignSelf: "flex-start", backgroundColor: T.card2, padding: "8px 14px", borderRadius: "12px", display: "flex", alignItems: "center", gap: "6px" }}>
+                                    <span style={{ color: T.text2, fontSize: "12px" }}>type பண்றாங்க</span>
+                                    <span style={{ display: "flex", gap: "3px" }}>
+                                        {[0, 1, 2].map(i => <span key={i} style={{ width: "6px", height: "6px", backgroundColor: "#ff6b35", borderRadius: "50%", display: "inline-block", animation: `typingDot 1.2s ${i * 0.2}s infinite` }} />)}
+                                    </span>
+                                </div>
+                            )}
+                            <div ref={chatEndRef} />
+                        </div>
+
+                        {showVoiceRecorder && (
+                            <VoiceRecorder onSend={handleVoiceSend} onCancel={() => setShowVoiceRecorder(false)} T={T} />
+                        )}
+
+                        {!showVoiceRecorder && (
+                            <div style={{ padding: "12px", borderTop: `1px solid ${T.border}`, display: "flex", gap: "6px", position: "relative" }}>
+                                {showEmojiPicker && (
+                                    <EmojiPicker onSelect={handleEmojiSelect} onClose={() => setShowEmojiPicker(false)} />
+                                )}
+                                <button onClick={() => setShowEmojiPicker(p => !p)}
+                                    style={{ padding: "10px", backgroundColor: showEmojiPicker ? "#ff6b35" : T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>
+                                    😊
+                                </button>
+                                <input type="text" placeholder="Message type பண்ணு..." value={newMessage}
+                                    onChange={handleTyping}
+                                    onKeyPress={(e) => e.key === "Enter" && sendMessage()}
+                                    style={{ flex: 1, padding: "10px 12px", backgroundColor: T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", outline: "none", minWidth: 0 }} />
+                                <button onClick={() => setShowVoiceRecorder(true)}
+                                    style={{ padding: "10px", backgroundColor: T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>
+                                    🎙️
+                                </button>
+                                <button onClick={() => sendMessage()}
+                                    style={{ padding: "10px 14px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>➤</button>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            {incomingCall && (
+                <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.75)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <div style={{ backgroundColor: T.card, borderRadius: "20px", border: "2px solid #27ae60", padding: "40px", textAlign: "center", animation: "pulse 1.5s infinite" }}>
+                        <div style={{ fontSize: "56px", marginBottom: "8px" }}>📹</div>
+                        <p style={{ color: T.text, fontSize: "20px", fontWeight: "bold", margin: "0 0 8px 0" }}>Incoming Video Call!</p>
+                        <p style={{ color: T.text2, fontSize: "14px", margin: "0 0 28px 0" }}>{callerName} call பண்றாங்க... 💕</p>
+                        <div style={{ display: "flex", gap: "16px", justifyContent: "center" }}>
+                            <button onClick={acceptCall} style={{ padding: "14px 32px", backgroundColor: "#27ae60", color: "white", border: "none", borderRadius: "12px", fontSize: "16px", cursor: "pointer", fontWeight: "bold" }}>✅ Accept</button>
+                            <button onClick={rejectCall} style={{ padding: "14px 32px", backgroundColor: "#e74c3c", color: "white", border: "none", borderRadius: "12px", fontSize: "16px", cursor: "pointer", fontWeight: "bold" }}>❌ Reject</button>
+                        </div>
+                    </div>
                 </div>
-            </div>
-        )}
+            )}
 
-        {/* ✅ LiveKitRoom renders ONCE - never unmounts on fullscreen toggle */}
-        {showVideoCall && livekitToken && (
-            <LiveKitRoom token={livekitToken} serverUrl={import.meta.env.VITE_LIVEKIT_URL} connect={true} video={true} audio={true} onDisconnected={endVideoCall}>
-                <RoomAudioRenderer />
-                {/* CallUI always renders - it handles both normal popup and fullscreen overlay internally */}
-                <CallUI isFullscreen={isFullscreen} onEnd={endVideoCall} />
-            </LiveKitRoom>
-        )}
+            {acceptLoading && (
+                <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.75)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <div style={{ backgroundColor: T.card, borderRadius: "20px", border: "2px solid #ff6b35", padding: "40px", textAlign: "center" }}>
+                        <div style={{ fontSize: "48px", marginBottom: "12px" }}>⏳</div>
+                        <p style={{ color: T.text, fontSize: "18px", fontWeight: "bold", margin: "0 0 8px 0" }}>Call connect ஆகுது...</p>
+                        <p style={{ color: T.text2, fontSize: "13px", margin: "0 0 20px 0" }}>சில seconds wait பண்ணு 🙏</p>
+                        <div style={{ width: "40px", height: "40px", border: "3px solid #333", borderTop: "3px solid #ff6b35", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto" }} />
+                    </div>
+                </div>
+            )}
 
-        <style>{`
+            {/* ✅ LiveKitRoom renders ONCE - never unmounts on fullscreen toggle */}
+            {showVideoCall && livekitToken && (
+                <LiveKitRoom token={livekitToken} serverUrl={import.meta.env.VITE_LIVEKIT_URL} connect={true} video={true} audio={true} onDisconnected={endVideoCall}>
+                    <RoomAudioRenderer />
+                    {/* CallUI always renders - it handles both normal popup and fullscreen overlay internally */}
+                    <CallUI isFullscreen={isFullscreen} onEnd={endVideoCall} />
+                </LiveKitRoom>
+            )}
+
+            <style>{`
                 @keyframes floatUp { 0%{transform:translateY(0) scale(1);opacity:1} 100%{transform:translateY(-300px) scale(1.5);opacity:0} }
                 @keyframes pulse { 0%,100%{box-shadow:0 8px 40px rgba(39,174,96,0.3)} 50%{box-shadow:0 8px 60px rgba(39,174,96,0.6)} }
                 @keyframes pulse2 { 0%,100%{opacity:1} 50%{opacity:0.3} }
@@ -1033,8 +1029,8 @@ return (
                 @keyframes slideIn { from{transform:translateX(100px);opacity:0} to{transform:translateX(0);opacity:1} }
                 @keyframes typingDot { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-6px)} }
             `}</style>
-    </div>
-);
+        </div>
+    );
 }
 
 export default Room;
