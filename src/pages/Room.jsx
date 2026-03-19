@@ -120,20 +120,22 @@ const decryptMessage = async (cipherB64, roomId) => {
 // preventing the "camera light stays on" ghost-participant problem.
 function RoomDisconnector({ onDisconnected }) {
     const room = useRoomContext();
+    const onDisconnectedRef = useRef(onDisconnected);
+    useEffect(() => { onDisconnectedRef.current = onDisconnected; }, [onDisconnected]);
     useEffect(() => {
         return () => {
             if (!room) return;
             try {
-                // Stop every local track individually so the browser releases hardware
                 room.localParticipant?.audioTrackPublications?.forEach((pub) => {
                     pub.track?.stop();
                 });
                 room.localParticipant?.videoTrackPublications?.forEach((pub) => {
                     pub.track?.stop();
                 });
-                // Then fully disconnect from the LiveKit server
                 room.disconnect(true);
             } catch { }
+            // ✅ Notify parent that call ended (e.g. tab close / navigate away)
+            onDisconnectedRef.current?.();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []); // run only on unmount — room ref is stable inside LiveKitRoom
@@ -493,6 +495,7 @@ function Room() {
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
     const [replyTo, setReplyTo] = useState(null);
+    const [unreadCount, setUnreadCount] = useState(0);
     const [onlineUsers, setOnlineUsers] = useState([]);
 
     const [needsUserGesture, setNeedsUserGesture] = useState(false); // Bug 3: autoplay block detection
@@ -508,6 +511,7 @@ function Room() {
     const historyLoggedRef = useRef(false);
     const joinedRef = useRef(false);
     const prevOnlineRef = useRef([]);
+    const showChatRef = useRef(false);
 
     // FIX 1: YouTube refs defined early - before any useEffect
     // pendingYtCmdRef is now a QUEUE (array) — multiple commands before player ready
@@ -517,6 +521,7 @@ function Room() {
     const pendingYtCmdRef = useRef([]);
 
     useEffect(() => { usernameRef.current = username; }, [username]);
+    useEffect(() => { showChatRef.current = showChat; if (showChat) setUnreadCount(0); }, [showChat]);
     useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
     // Reset YouTube on room change
@@ -662,7 +667,7 @@ function Room() {
             if (data.callStatus === "calling" && data.callBy !== me) { setCallerName(data.callBy || "Partner"); setIncomingCall(true); }
             if (data.callStatus === "idle" || data.callStatus === "ended") {
                 setIncomingCall(false);
-                if (data.callBy !== me) { setCallStatus(null); setShowVideoCall(false); setLivekitToken(null); }
+                if (data.callBy !== me) { setLivekitToken(null); setShowVideoCall(false); setCallStatus(null); }
             }
 
             // Participants join toast
@@ -734,6 +739,13 @@ function Room() {
             }));
             setMessages(decrypted);
             markMessagesRead(decrypted);
+            // Track unread count when chat is closed
+            if (!showChatRef.current) {
+                const myUnread = decrypted.filter(m => m.username !== usernameRef.current && !(m.readBy || []).includes(usernameRef.current));
+                setUnreadCount(myUnread.length);
+            } else {
+                setUnreadCount(0);
+            }
         });
     }, [roomId, markMessagesRead]);
 
@@ -950,7 +962,7 @@ function Room() {
             const data = await res.json();
             if (!data.secure_url) throw new Error("Upload failed");
             const encLabel = await encryptMessage(`🎙️ Voice message (${duration}s)`, roomId);
-            await addDoc(collection(db, "chats"), { roomId, username, message: encLabel, voiceUrl: data.secure_url, type: "voice", createdAt: new Date() });
+            await addDoc(collection(db, "chats"), { roomId, username, message: encLabel, voiceUrl: data.secure_url, type: "voice", createdAt: new Date(), readBy: [username] });
             showToast("Voice message sent! 🎙️", "✅", "#27ae60");
         } catch (err) { showToast("Voice send fail: " + err.message, "❌", "#e74c3c"); }
     }, [roomId, username, showToast]);
@@ -1029,7 +1041,7 @@ function Room() {
                 </div>
             )}
 
-            <div style={{ display: "flex", flex: 1, height: showChat ? "calc(100vh - 50vh)" : "100vh", flexDirection: "column", transition: "height 0.3s ease" }}>
+            <div style={{ display: "flex", flex: 1, height: "100vh", flexDirection: "column" }}>
                 <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
                     <div ref={playerContainerRef} style={isFullscreen
                         ? { position: "fixed", inset: 0, zIndex: 8999, backgroundColor: "#000" }
@@ -1041,7 +1053,6 @@ function Room() {
                                     src={getYouTubeSrc(youtubeId)}
                                     style={{ width: "100%", height: "100%", border: "none" }}
                                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                                    sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"
                                     allowFullScreen
                                     onLoad={() => {
                                         // YouTube iframe loaded - wait 1.5s for API to init, then mark ready
@@ -1123,7 +1134,7 @@ function Room() {
                         <button onClick={() => sendReaction("💕")} style={{ fontSize: "22px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>💕</button>
                     </div>
 
-                    <div style={{ backgroundColor: T.card, padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px", borderTop: `1px solid ${T.border}` }}>
+                    <div style={{ backgroundColor: T.card, padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px", borderTop: `1px solid ${T.border}`, paddingBottom: showChat ? "calc(50vh + 12px)" : "12px", transition: "padding-bottom 0.3s ease" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                             <span style={{ color: T.text3, fontSize: "13px" }}>Room:</span>
                             <span style={{ color: "#ff6b35", fontSize: "13px", fontWeight: "bold" }}>{roomId}</span>
@@ -1162,7 +1173,9 @@ function Room() {
                                 style={{ padding: "8px 14px", backgroundColor: "#25D366", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>💬 WhatsApp</button>
                             <button onClick={() => setShowChat(!showChat)}
                                 style={{ padding: "8px 14px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
-                                {showChat ? "💬 Hide Chat" : "💬 Show Chat"}
+                                {showChat ? "💬 Hide Chat" : (
+                                    <>💬 Chat{unreadCount > 0 && <span style={{ marginLeft: "6px", backgroundColor: "#e74c3c", color: "white", borderRadius: "50%", padding: "1px 6px", fontSize: "11px", fontWeight: "bold" }}>{unreadCount}</span>}</>
+                                )}
                             </button>
                         </div>
                     </div>
@@ -1170,113 +1183,116 @@ function Room() {
 
                 {/* Bottom Sheet Chat */}
                 {showChat && (
-                    <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 500, display: "flex", flexDirection: "column", height: "50vh", backgroundColor: T.card, borderTop: "2px solid #ff6b35", borderRadius: "20px 20px 0 0", boxShadow: "0 -4px 32px rgba(0,0,0,0.5)", animation: "slideUp 0.25s ease" }}>
-                        {/* Drag handle */}
-                        <div style={{ display: "flex", justifyContent: "center", padding: "8px 0 4px 0", cursor: "pointer" }} onClick={() => setShowChat(false)}>
-                            <div style={{ width: "40px", height: "4px", backgroundColor: "#444", borderRadius: "2px" }} />
-                        </div>
-                        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                                <span style={{ color: T.text, fontWeight: "bold", fontSize: "14px" }}>💬 Chat</span>
-                                <span style={{ backgroundColor: "rgba(39,174,96,0.15)", color: "#27ae60", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "8px", padding: "1px 7px", fontSize: "10px", fontWeight: "bold" }}>🔐 E2E</span>
-                                {onlineUsers.filter(u => u !== username).length > 0 ? (
-                                    <span style={{ display: "flex", alignItems: "center", gap: "3px" }}>
-                                        <span style={{ width: "7px", height: "7px", backgroundColor: "#27ae60", borderRadius: "50%", display: "inline-block", animation: "pulse2 2s infinite" }} />
-                                        <span style={{ color: "#27ae60", fontSize: "10px", fontWeight: "bold" }}>Online</span>
-                                    </span>
-                                ) : (
-                                    <span style={{ display: "flex", alignItems: "center", gap: "3px" }}>
-                                        <span style={{ width: "7px", height: "7px", backgroundColor: "#555", borderRadius: "50%", display: "inline-block" }} />
-                                        <span style={{ color: "#555", fontSize: "10px" }}>Offline</span>
-                                    </span>
-                                )}
+                    <>
+                        <div onClick={() => setShowChat(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: "50vh", zIndex: 499, backgroundColor: "rgba(0,0,0,0.4)" }} />
+                        <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 500, display: "flex", flexDirection: "column", height: "50vh", backgroundColor: T.card, borderTop: "2px solid #ff6b35", borderRadius: "20px 20px 0 0", boxShadow: "0 -4px 32px rgba(0,0,0,0.5)", animation: "slideUp 0.25s ease" }}>
+                            {/* Drag handle */}
+                            <div style={{ display: "flex", justifyContent: "center", padding: "8px 0 4px 0", cursor: "pointer" }} onClick={() => setShowChat(false)}>
+                                <div style={{ width: "40px", height: "4px", backgroundColor: "#444", borderRadius: "2px" }} />
                             </div>
-                            <span style={{ color: "#ff6b35", fontSize: "13px" }}>👤 {username}</span>
-                        </div>
+                            <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                    <span style={{ color: T.text, fontWeight: "bold", fontSize: "14px" }}>💬 Chat</span>
+                                    <span style={{ backgroundColor: "rgba(39,174,96,0.15)", color: "#27ae60", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "8px", padding: "1px 7px", fontSize: "10px", fontWeight: "bold" }}>🔐 E2E</span>
+                                    {onlineUsers.filter(u => u !== username).length > 0 ? (
+                                        <span style={{ display: "flex", alignItems: "center", gap: "3px" }}>
+                                            <span style={{ width: "7px", height: "7px", backgroundColor: "#27ae60", borderRadius: "50%", display: "inline-block", animation: "pulse2 2s infinite" }} />
+                                            <span style={{ color: "#27ae60", fontSize: "10px", fontWeight: "bold" }}>Online</span>
+                                        </span>
+                                    ) : (
+                                        <span style={{ display: "flex", alignItems: "center", gap: "3px" }}>
+                                            <span style={{ width: "7px", height: "7px", backgroundColor: "#555", borderRadius: "50%", display: "inline-block" }} />
+                                            <span style={{ color: "#555", fontSize: "10px" }}>Offline</span>
+                                        </span>
+                                    )}
+                                </div>
+                                <span style={{ color: "#ff6b35", fontSize: "13px" }}>👤 {username}</span>
+                            </div>
 
-                        <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                            {messages.length === 0 && <p style={{ color: T.text3, textAlign: "center", fontSize: "13px" }}>message இல்ல - first message பண்ணு! 👋</p>}
-                            {messages.map((msg) => {
-                                const isMe = msg.username === username;
-                                const isRead = (msg.readBy || []).length > 1;
-                                return (
-                                    <div key={msg.id}
-                                        style={{ maxWidth: "85%", alignSelf: isMe ? "flex-end" : "flex-start", display: "flex", flexDirection: "column", gap: "2px" }}
-                                        onClick={() => { if (msg.type !== "voice") setReplyTo({ id: msg.id, username: msg.username, message: msg.message }); }}>
-                                        {msg.replyToMessageDecrypted && (
-                                            <div style={{ backgroundColor: isMe ? "rgba(0,0,0,0.2)" : "rgba(255,255,255,0.1)", borderLeft: "3px solid #ff6b35", borderRadius: "6px", padding: "4px 8px", marginBottom: "2px" }}>
-                                                <p style={{ color: isMe ? "rgba(255,255,255,0.7)" : T.text2, fontSize: "10px", margin: "0 0 2px 0", fontWeight: "bold" }}>↩ {msg.replyToUsername}</p>
-                                                <p style={{ color: isMe ? "rgba(255,255,255,0.6)" : T.text3, fontSize: "11px", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "180px" }}>{msg.replyToMessageDecrypted}</p>
-                                            </div>
-                                        )}
-                                        <div style={{ padding: "8px 12px", borderRadius: "12px", display: "flex", flexDirection: "column", backgroundColor: isMe ? "#ff6b35" : T.card2, cursor: "pointer", transition: "opacity 0.15s" }}
-                                            onMouseEnter={e => e.currentTarget.style.opacity = "0.85"}
-                                            onMouseLeave={e => e.currentTarget.style.opacity = "1"}>
-                                            {!isMe && <p style={{ color: T.text2, fontSize: "11px", margin: "0 0 4px 0" }}>{msg.username}</p>}
-                                            {msg.type === "voice" && msg.voiceUrl ? (
-                                                <div>
-                                                    <p style={{ color: "rgba(255,255,255,0.8)", fontSize: "11px", margin: "0 0 4px 0" }}>🎙️ Voice message</p>
-                                                    <audio src={msg.voiceUrl} controls style={{ width: "180px", height: "28px" }} />
+                            <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                                {messages.length === 0 && <p style={{ color: T.text3, textAlign: "center", fontSize: "13px" }}>message இல்ல - first message பண்ணு! 👋</p>}
+                                {messages.map((msg) => {
+                                    const isMe = msg.username === username;
+                                    const isRead = (msg.readBy || []).length > 1;
+                                    return (
+                                        <div key={msg.id}
+                                            style={{ maxWidth: "85%", alignSelf: isMe ? "flex-end" : "flex-start", display: "flex", flexDirection: "column", gap: "2px" }}
+                                            onClick={() => { if (msg.type !== "voice") setReplyTo({ id: msg.id, username: msg.username, message: msg.message }); }}>
+                                            {msg.replyToMessageDecrypted && (
+                                                <div style={{ backgroundColor: isMe ? "rgba(0,0,0,0.2)" : "rgba(255,255,255,0.1)", borderLeft: "3px solid #ff6b35", borderRadius: "6px", padding: "4px 8px", marginBottom: "2px" }}>
+                                                    <p style={{ color: isMe ? "rgba(255,255,255,0.7)" : T.text2, fontSize: "10px", margin: "0 0 2px 0", fontWeight: "bold" }}>↩ {msg.replyToUsername}</p>
+                                                    <p style={{ color: isMe ? "rgba(255,255,255,0.6)" : T.text3, fontSize: "11px", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "180px" }}>{msg.replyToMessageDecrypted}</p>
                                                 </div>
-                                            ) : (
-                                                <p style={{ color: "white", fontSize: "14px", margin: 0, wordBreak: "break-word" }}>{msg.message}</p>
                                             )}
-                                            {isMe && (
-                                                <span style={{ alignSelf: "flex-end", marginTop: "2px", fontSize: "11px", color: isRead ? "#a8e6cf" : "rgba(255,255,255,0.5)" }}>
-                                                    {isRead ? "✓✓" : "✓"}
-                                                </span>
-                                            )}
+                                            <div style={{ padding: "8px 12px", borderRadius: "12px", display: "flex", flexDirection: "column", backgroundColor: isMe ? "#ff6b35" : T.card2, cursor: "pointer", transition: "opacity 0.15s" }}
+                                                onMouseEnter={e => e.currentTarget.style.opacity = "0.85"}
+                                                onMouseLeave={e => e.currentTarget.style.opacity = "1"}>
+                                                {!isMe && <p style={{ color: T.text2, fontSize: "11px", margin: "0 0 4px 0" }}>{msg.username}</p>}
+                                                {msg.type === "voice" && msg.voiceUrl ? (
+                                                    <div>
+                                                        <p style={{ color: "rgba(255,255,255,0.8)", fontSize: "11px", margin: "0 0 4px 0" }}>🎙️ Voice message</p>
+                                                        <audio src={msg.voiceUrl} controls style={{ width: "180px", height: "28px" }} />
+                                                    </div>
+                                                ) : (
+                                                    <p style={{ color: "white", fontSize: "14px", margin: 0, wordBreak: "break-word" }}>{msg.message}</p>
+                                                )}
+                                                {isMe && (
+                                                    <span style={{ alignSelf: "flex-end", marginTop: "2px", fontSize: "11px", color: isRead ? "#a8e6cf" : "rgba(255,255,255,0.5)" }}>
+                                                        {isRead ? "✓✓" : "✓"}
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
+                                    );
+                                })}
+                                {partnerTyping && (
+                                    <div style={{ alignSelf: "flex-start", backgroundColor: T.card2, padding: "8px 14px", borderRadius: "12px", display: "flex", alignItems: "center", gap: "6px" }}>
+                                        <span style={{ color: T.text2, fontSize: "12px" }}>type பண்றாங்க</span>
+                                        <span style={{ display: "flex", gap: "3px" }}>
+                                            {[0, 1, 2].map(i => <span key={i} style={{ width: "6px", height: "6px", backgroundColor: "#ff6b35", borderRadius: "50%", display: "inline-block", animation: `typingDot 1.2s ${i * 0.2}s infinite` }} />)}
+                                        </span>
                                     </div>
-                                );
-                            })}
-                            {partnerTyping && (
-                                <div style={{ alignSelf: "flex-start", backgroundColor: T.card2, padding: "8px 14px", borderRadius: "12px", display: "flex", alignItems: "center", gap: "6px" }}>
-                                    <span style={{ color: T.text2, fontSize: "12px" }}>type பண்றாங்க</span>
-                                    <span style={{ display: "flex", gap: "3px" }}>
-                                        {[0, 1, 2].map(i => <span key={i} style={{ width: "6px", height: "6px", backgroundColor: "#ff6b35", borderRadius: "50%", display: "inline-block", animation: `typingDot 1.2s ${i * 0.2}s infinite` }} />)}
-                                    </span>
+                                )}
+                                <div ref={chatEndRef} />
+                            </div>
+
+                            {showVoiceRecorder && (
+                                <VoiceRecorder onSend={handleVoiceSend} onCancel={() => setShowVoiceRecorder(false)} T={T} />
+                            )}
+
+                            {!showVoiceRecorder && (
+                                <div style={{ borderTop: `1px solid ${T.border}` }}>
+                                    {replyTo && (
+                                        <div style={{ padding: "6px 12px", backgroundColor: T.card2, display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${T.border}` }}>
+                                            <div style={{ display: "flex", alignItems: "center", gap: "6px", flex: 1, minWidth: 0 }}>
+                                                <span style={{ color: "#ff6b35", fontSize: "12px" }}>↩</span>
+                                                <div style={{ minWidth: 0 }}>
+                                                    <p style={{ color: "#ff6b35", fontSize: "10px", margin: 0, fontWeight: "bold" }}>{replyTo.username}</p>
+                                                    <p style={{ color: T.text2, fontSize: "11px", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{replyTo.message}</p>
+                                                </div>
+                                            </div>
+                                            <button onClick={() => setReplyTo(null)} style={{ background: "none", border: "none", color: T.text3, cursor: "pointer", fontSize: "16px", padding: "0 4px", flexShrink: 0 }}>✕</button>
+                                        </div>
+                                    )}
+                                    <div style={{ padding: "12px", display: "flex", gap: "6px", position: "relative" }}>
+                                        {showEmojiPicker && (
+                                            <EmojiPicker onSelect={handleEmojiSelect} onClose={() => setShowEmojiPicker(false)} />
+                                        )}
+                                        <button onClick={() => setShowEmojiPicker(p => !p)}
+                                            style={{ padding: "10px", backgroundColor: showEmojiPicker ? "#ff6b35" : T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>😊</button>
+                                        <input type="text" placeholder={replyTo ? "↩ Replying..." : "Message type பண்ணு..."} value={newMessage}
+                                            onChange={handleTyping}
+                                            onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+                                            style={{ flex: 1, padding: "10px 12px", backgroundColor: T.card2, border: `1px solid ${replyTo ? "#ff6b35" : T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", outline: "none", minWidth: 0 }} />
+                                        <button onClick={() => setShowVoiceRecorder(true)}
+                                            style={{ padding: "10px", backgroundColor: T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>🎙️</button>
+                                        <button onClick={() => sendMessage()}
+                                            style={{ padding: "10px 14px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>➤</button>
+                                    </div>
                                 </div>
                             )}
-                            <div ref={chatEndRef} />
                         </div>
-
-                        {showVoiceRecorder && (
-                            <VoiceRecorder onSend={handleVoiceSend} onCancel={() => setShowVoiceRecorder(false)} T={T} />
-                        )}
-
-                        {!showVoiceRecorder && (
-                            <div style={{ borderTop: `1px solid ${T.border}` }}>
-                                {replyTo && (
-                                    <div style={{ padding: "6px 12px", backgroundColor: T.card2, display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${T.border}` }}>
-                                        <div style={{ display: "flex", alignItems: "center", gap: "6px", flex: 1, minWidth: 0 }}>
-                                            <span style={{ color: "#ff6b35", fontSize: "12px" }}>↩</span>
-                                            <div style={{ minWidth: 0 }}>
-                                                <p style={{ color: "#ff6b35", fontSize: "10px", margin: 0, fontWeight: "bold" }}>{replyTo.username}</p>
-                                                <p style={{ color: T.text2, fontSize: "11px", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{replyTo.message}</p>
-                                            </div>
-                                        </div>
-                                        <button onClick={() => setReplyTo(null)} style={{ background: "none", border: "none", color: T.text3, cursor: "pointer", fontSize: "16px", padding: "0 4px", flexShrink: 0 }}>✕</button>
-                                    </div>
-                                )}
-                                <div style={{ padding: "12px", display: "flex", gap: "6px", position: "relative" }}>
-                                    {showEmojiPicker && (
-                                        <EmojiPicker onSelect={handleEmojiSelect} onClose={() => setShowEmojiPicker(false)} />
-                                    )}
-                                    <button onClick={() => setShowEmojiPicker(p => !p)}
-                                        style={{ padding: "10px", backgroundColor: showEmojiPicker ? "#ff6b35" : T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>😊</button>
-                                    <input type="text" placeholder={replyTo ? "↩ Replying..." : "Message type பண்ணு..."} value={newMessage}
-                                        onChange={handleTyping}
-                                        onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-                                        style={{ flex: 1, padding: "10px 12px", backgroundColor: T.card2, border: `1px solid ${replyTo ? "#ff6b35" : T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", outline: "none", minWidth: 0 }} />
-                                    <button onClick={() => setShowVoiceRecorder(true)}
-                                        style={{ padding: "10px", backgroundColor: T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>🎙️</button>
-                                    <button onClick={() => sendMessage()}
-                                        style={{ padding: "10px 14px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>➤</button>
-                                </div>
-                            </div>
-                        )}
-                    </div>
+                    </>
                 )}
 
             </div>
