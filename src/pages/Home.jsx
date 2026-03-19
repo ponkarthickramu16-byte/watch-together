@@ -101,7 +101,10 @@ function Home({ user }) {
                 callBy: "",
                 participants: [],
             });
-            // Navigate only after Firestore write is confirmed ✅
+            // Bug 4 fix: navigate பண்ணிட்டு creatingRef reset பண்றோம்.
+            // இல்லன்னா back button press பண்ணி Home-க்கு வந்தா
+            // "Go" button permanent-ஆ work பண்ணாது. ✅
+            creatingRef.current = false;
             navigate(`/room/${roomId}`);
         } catch (err) {
             setError("❌ Room create ஆகல: " + err.message);
@@ -278,7 +281,7 @@ function Home({ user }) {
                         <div style={{ display: "flex", gap: "8px" }}>
                             <input type="url" placeholder="https://youtube.com/watch?v=..." value={movieUrl}
                                 onChange={(e) => { setMovieUrl(e.target.value); setError(""); }}
-                                onKeyPress={(e) => e.key === "Enter" && handleYouTubeOrLink()}
+                                onKeyDown={(e) => e.key === "Enter" && handleYouTubeOrLink()}
                                 style={S.urlInput} />
                             {/* ✅ Bug fix #4 — disabled during loading */}
                             <button onClick={handleYouTubeOrLink} disabled={linkLoading || uploading}

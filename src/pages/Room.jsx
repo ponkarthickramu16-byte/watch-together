@@ -3,13 +3,14 @@ import { useParams } from "react-router-dom";
 import { db } from "../firebase";
 import {
     collection, query, where, onSnapshot,
-    updateDoc, doc, addDoc, orderBy, arrayUnion,
+    updateDoc, doc, addDoc, orderBy, arrayUnion, getDoc, deleteDoc,
 } from "firebase/firestore";
 import {
     LiveKitRoom,
     useLocalParticipant,
     useRemoteParticipants,
     RoomAudioRenderer,
+    useRoomContext,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
 
@@ -29,16 +30,43 @@ const getYouTubeId = (url) => {
     return match ? match[1] : null;
 };
 
+// ─── Bug 6 fix: Environment variable guard ────────────────────────────────────
+// Validate required env vars at module load. If any are missing in production
+// (e.g. forgotten in Vercel/Netlify dashboard), we surface a clear error in the
+// console AND in the UI instead of a blank white-screen crash.
+const REQUIRED_ENV = {
+    VITE_LIVEKIT_URL: import.meta.env.VITE_LIVEKIT_URL,
+    VITE_CLOUDINARY_CLOUD_NAME: import.meta.env.VITE_CLOUDINARY_CLOUD_NAME,
+    VITE_CLOUDINARY_UPLOAD_PRESET: import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET,
+};
+const MISSING_ENV = Object.entries(REQUIRED_ENV)
+    .filter(([, v]) => !v)
+    .map(([k]) => k);
+if (MISSING_ENV.length > 0) {
+    console.error(
+        `[Watch Together] Missing required environment variables:\n  ${MISSING_ENV.join("\n  ")}\n` +
+        "Add them to your .env file (local) or deployment dashboard (Vercel/Netlify)."
+    );
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Bug 1 fix: Key cache — roomId மாறாது, so key எப்பவும் same.
+// Cache இல்லாம 50 messages = 50 × 100k = 50 lakh iterations → mobile freeze.
+// Cache வச்சா first message மட்டும் 100k iterations, மீதி instant. ✅
+const _keyCache = new Map();
 const getCryptoKey = async (roomId) => {
+    if (_keyCache.has(roomId)) return _keyCache.get(roomId);
     const encoder = new TextEncoder();
     const keyMaterial = await window.crypto.subtle.importKey(
         "raw", encoder.encode(roomId.padEnd(32, "0").substring(0, 32)),
         "PBKDF2", false, ["deriveKey"]
     );
-    return window.crypto.subtle.deriveKey(
+    const key = await window.crypto.subtle.deriveKey(
         { name: "PBKDF2", salt: encoder.encode("watch-together-salt"), iterations: 100000, hash: "SHA-256" },
         keyMaterial, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]
     );
+    _keyCache.set(roomId, key);
+    return key;
 };
 
 const encryptMessage = async (text, roomId) => {
@@ -49,7 +77,14 @@ const encryptMessage = async (text, roomId) => {
         const cipher = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
         const combined = new Uint8Array(iv.byteLength + cipher.byteLength);
         combined.set(iv, 0); combined.set(new Uint8Array(cipher), iv.byteLength);
-        return btoa(String.fromCharCode(...combined));
+        // Fix: btoa(String.fromCharCode(...combined)) crashes via stack overflow
+        // when combined is large (>~65k bytes). Use a chunked loop instead.
+        let binary = "";
+        const CHUNK = 8192;
+        for (let i = 0; i < combined.length; i += CHUNK) {
+            binary += String.fromCharCode(...combined.subarray(i, i + CHUNK));
+        }
+        return btoa(binary);
     } catch { return text; }
 };
 
@@ -78,6 +113,32 @@ const decryptMessage = async (cipherB64, roomId) => {
         return new TextDecoder().decode(decrypted);
     } catch { return cipherB64; }
 };
+
+// Bug 1 fix — RoomDisconnector: must be rendered inside <LiveKitRoom> so it
+// can access the room context. On unmount it explicitly stops every local
+// track (camera/mic) at the hardware layer BEFORE React removes the element,
+// preventing the "camera light stays on" ghost-participant problem.
+function RoomDisconnector({ onDisconnected }) {
+    const room = useRoomContext();
+    useEffect(() => {
+        return () => {
+            if (!room) return;
+            try {
+                // Stop every local track individually so the browser releases hardware
+                room.localParticipant?.audioTrackPublications?.forEach((pub) => {
+                    pub.track?.stop();
+                });
+                room.localParticipant?.videoTrackPublications?.forEach((pub) => {
+                    pub.track?.stop();
+                });
+                // Then fully disconnect from the LiveKit server
+                room.disconnect(true);
+            } catch { }
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []); // run only on unmount — room ref is stable inside LiveKitRoom
+    return null;
+}
 
 function Toast({ toasts }) {
     return (
@@ -339,12 +400,24 @@ function CallUI({ isFullscreen, onEnd }) {
 function WatchHistoryModal({ roomId, onClose, T }) {
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [err, setErr] = useState(false);
+    // Bug 2 fix: "index" = composite index இல்ல, "general" = வேற error
+    const [errType, setErrType] = useState(null);
+    const [indexUrl, setIndexUrl] = useState("");
     useEffect(() => {
         const q = query(collection(db, "watchHistory"), where("roomId", "==", roomId), orderBy("watchedAt", "desc"));
         return onSnapshot(q,
             (snap) => { setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); },
-            () => { setErr(true); setLoading(false); }
+            (err) => {
+                if (err.code === "failed-precondition") {
+                    // Firebase error message-ல index create link embed ஆகி இருக்கும்
+                    const match = err.message?.match(/https:\/\/console\.firebase\.google\.com[^\s]+/);
+                    setIndexUrl(match ? match[0] : "https://console.firebase.google.com/project/_/firestore/indexes");
+                    setErrType("index");
+                } else {
+                    setErrType("general");
+                }
+                setLoading(false);
+            }
         );
     }, [roomId]);
     return (
@@ -356,8 +429,21 @@ function WatchHistoryModal({ roomId, onClose, T }) {
                 </div>
                 <div style={{ overflowY: "auto", flex: 1, padding: "12px" }}>
                     {loading && <p style={{ color: T.text2, textAlign: "center", padding: "20px" }}>⏳ Load ஆகுது...</p>}
-                    {err && <p style={{ color: "#e74c3c", textAlign: "center", padding: "20px", fontSize: "13px" }}>❌ History load ஆகல. Firestore index check பண்ணு.</p>}
-                    {!loading && !err && history.length === 0 && <p style={{ color: T.text3, textAlign: "center", padding: "20px" }}>இன்னும் எந்த movie-உம் பார்க்கல 🍿</p>}
+                    {errType === "index" && (
+                        <div style={{ backgroundColor: "rgba(243,156,18,0.15)", border: "1px solid rgba(243,156,18,0.4)", borderRadius: "10px", padding: "14px", margin: "8px 0" }}>
+                            <p style={{ color: "#f39c12", fontSize: "13px", fontWeight: "bold", margin: "0 0 6px 0" }}>⚠️ Firestore Index வேணும்!</p>
+                            <p style={{ color: T.text2, fontSize: "12px", margin: "0 0 10px 0" }}>
+                                <code style={{ backgroundColor: "rgba(0,0,0,0.3)", padding: "2px 5px", borderRadius: "4px" }}>roomId + watchedAt</code> composite index create ஆகல.
+                            </p>
+                            <a href={indexUrl} target="_blank" rel="noreferrer"
+                                style={{ display: "inline-block", color: "white", fontSize: "12px", fontWeight: "bold", backgroundColor: "#f39c12", padding: "6px 14px", borderRadius: "8px", textDecoration: "none" }}>
+                                🔗 Firebase Console-ல Index Create பண்ணு →
+                            </a>
+                            <p style={{ color: T.text3, fontSize: "11px", margin: "8px 0 0 0" }}>Click பண்ணி "Create index" press பண்ணு. சில minutes-ல ready ஆகும்.</p>
+                        </div>
+                    )}
+                    {errType === "general" && <p style={{ color: "#e74c3c", textAlign: "center", padding: "20px", fontSize: "13px" }}>❌ History load ஆகல. Refresh பண்ணி try பண்ணு.</p>}
+                    {!loading && !errType && history.length === 0 && <p style={{ color: T.text3, textAlign: "center", padding: "20px" }}>இன்னும் எந்த movie-உம் பார்க்கல 🍿</p>}
                     {history.map(h => (
                         <div key={h.id} style={{ backgroundColor: T.card2, borderRadius: "10px", padding: "12px 16px", marginBottom: "8px", display: "flex", alignItems: "center", gap: "12px" }}>
                             <span style={{ fontSize: "28px" }}>{h.movieType === "youtube" ? "▶️" : "🎞️"}</span>
@@ -404,7 +490,9 @@ function Room() {
     const [replyTo, setReplyTo] = useState(null);
     const [onlineUsers, setOnlineUsers] = useState([]);
 
+    const [needsUserGesture, setNeedsUserGesture] = useState(false); // Bug 3: autoplay block detection
     const prevParticipantsRef = useRef([]);
+    const playerContainerRef = useRef(null); // Bug 4: measure actual player bounds for emoji positioning
     const iframeRef = useRef(null);
     const videoRef = useRef(null);
     const chatEndRef = useRef(null);
@@ -513,9 +601,22 @@ function Room() {
 
     useEffect(() => {
         if (!roomData?.movieUrl || !getYouTubeId(roomData.movieUrl)) return;
-        const cmd = isPlaying ? "playVideo" : "pauseVideo";
-        const t = setTimeout(() => sendYtCmd(cmd), 200);
-        return () => clearTimeout(t);
+        if (isPlaying) {
+            // Bug 3: Browsers block autoplay with sound. We first mute, play,
+            // then immediately unmute — this satisfies the autoplay policy.
+            // If even that fails (very restrictive policy), show a user-gesture overlay.
+            const t = setTimeout(() => {
+                sendYtCmd("mute");
+                sendYtCmd("playVideo");
+                // Unmute after a short delay; user can also unmute manually.
+                setTimeout(() => sendYtCmd("unMute"), 500);
+                setNeedsUserGesture(false);
+            }, 200);
+            return () => clearTimeout(t);
+        } else {
+            const t = setTimeout(() => { sendYtCmd("pauseVideo"); setNeedsUserGesture(false); }, 200);
+            return () => clearTimeout(t);
+        }
     }, [isPlaying, roomData?.movieUrl, sendYtCmd]);
 
     // FIX 4: Remove isSyncing from deps - use only roomId
@@ -632,16 +733,47 @@ function Room() {
             snap.docChanges().forEach(change => {
                 if (change.type === "added") {
                     const { emoji } = change.doc.data(); const id = change.doc.id;
-                    setFloatingReactions(prev => [...prev, { id, emoji, x: Math.random() * 70 + 10 }]);
-                    setTimeout(() => setFloatingReactions(prev => prev.filter(r => r.id !== id)), 3000);
+                    const containerW = playerContainerRef.current?.offsetWidth || 0;
+                    const EMOJI_PX = 40;
+                    const MARGIN = 16;
+                    let x;
+                    if (containerW > EMOJI_PX * 2 + MARGIN * 2) {
+                        const maxLeft = containerW - EMOJI_PX - MARGIN;
+                        x = Math.floor(Math.random() * (maxLeft - MARGIN) + MARGIN);
+                        x = `${x}px`;
+                    } else {
+                        x = "45%";
+                    }
+                    setFloatingReactions(prev => [...prev, { id, emoji, x }]);
+                    // Bug 5 fix: 3s-ல UI-ல மறைக்கிறோம் + Firestore-லயும் delete பண்றோம்.
+                    // இல்லன்னா reconnect ஆனா எல்லா past reactions-உம் ஒரே நேரத்துல
+                    // animate ஆகும், collection unlimited-ஆ grow ஆகும். ✅
+                    setTimeout(() => {
+                        setFloatingReactions(prev => prev.filter(r => r.id !== id));
+                        deleteDoc(doc(db, "reactions", id)).catch(() => { });
+                    }, 3000);
                 }
             });
         });
     }, [roomId]);
 
+    // Bug 2 note: messages live in the top-level "chats" collection and reactions
+    // in the "reactions" collection — both are independent documents so they are
+    // NOT subject to the 1 MiB room-document limit. The only arrayUnion remaining
+    // on the room doc is "participants". We guard it: skip the write if the array
+    // already contains this username so we never grow it unboundedly.
     useEffect(() => {
         if (!roomDocId || !username) return;
-        updateDoc(doc(db, "rooms", roomDocId), { participants: arrayUnion(username) }).catch(() => { });
+        // Read first; only append if not already present to prevent the participants
+        // array from growing across repeated reconnects and hitting the 1 MiB limit.
+        getDoc(doc(db, "rooms", roomDocId)).then((snap) => {
+            const existing = snap.data()?.participants || [];
+            if (!existing.includes(username)) {
+                updateDoc(doc(db, "rooms", roomDocId), { participants: arrayUnion(username) }).catch(() => { });
+            }
+        }).catch(() => {
+            updateDoc(doc(db, "rooms", roomDocId), { participants: arrayUnion(username) }).catch(() => { });
+        });
     }, [roomDocId, username]);
 
     // FIX 3: Presence - visibilitychange properly removed
@@ -681,23 +813,25 @@ function Room() {
         }
     }, [isPlaying, roomDocId, roomData, username, saveWatchHistory]);
 
-    const updatePlayState = async (playing, time) => {
+    // Bug 5 fix: wrap in useCallback with explicit deps so these functions always
+    // close over the current roomDocId/username, not a stale snapshot from mount-time.
+    const updatePlayState = useCallback(async (playing, time) => {
         if (!roomDocId) return;
         isSyncingRef.current = true;
         const update = { isPlaying: playing };
         if (time !== undefined) update.currentTime = time;
         await updateDoc(doc(db, "rooms", roomDocId), update);
         setTimeout(() => { isSyncingRef.current = false; }, 1000);
-    };
+    }, [roomDocId]);
 
-    const handleSeek = async () => {
+    const handleSeek = useCallback(async () => {
         if (!videoRef.current || !roomDocId) return;
         isSyncingSeekRef.current = true;
         await updateDoc(doc(db, "rooms", roomDocId), { currentTime: videoRef.current.currentTime });
         setTimeout(() => { isSyncingSeekRef.current = false; }, 1500);
-    };
+    }, [roomDocId]);
 
-    const handleTyping = async (e) => {
+    const handleTyping = useCallback(async (e) => {
         setNewMessage(e.target.value);
         if (!roomDocId) return;
         clearTimeout(typingWriteRef.current);
@@ -708,27 +842,27 @@ function Room() {
         typingTimeoutRef.current = setTimeout(async () => {
             await updateDoc(doc(db, "rooms", roomDocId), { typing: "" }).catch(() => { });
         }, 2000);
-    };
+    }, [roomDocId, username]);
 
-    const fetchToken = async () => {
+    const fetchToken = useCallback(async () => {
         const url = `/api/token?roomName=room-${roomId}&participantName=${encodeURIComponent(username)}`;
         const r = await fetch(url);
         if (!r.ok) { const err = await r.json().catch(() => ({})); throw new Error(err.error || "Token fetch failed"); }
         const d = await r.json();
         if (!d.token) throw new Error("No token received");
         return d.token;
-    };
+    }, [roomId, username]);
 
-    const startVideoCall = async () => {
+    const startVideoCall = useCallback(async () => {
         try {
             setCallStatus("calling");
             if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "calling", callBy: username });
             const token = await fetchToken();
             setLivekitToken(token); setShowVideoCall(true); setCallStatus("in-call");
         } catch (err) { setCallStatus(null); alert("Video call start ஆகல: " + err.message); }
-    };
+    }, [roomDocId, username, fetchToken]);
 
-    const acceptCall = async () => {
+    const acceptCall = useCallback(async () => {
         setIncomingCall(false); setAcceptLoading(true); setCallStatus("in-call");
         try {
             if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "in-call" });
@@ -736,31 +870,57 @@ function Room() {
             setLivekitToken(token); setShowVideoCall(true);
         } catch (err) { setCallStatus(null); alert("❌ Call accept ஆகல: " + err.message); }
         finally { setAcceptLoading(false); }
-    };
+    }, [roomDocId, fetchToken]);
 
-    const rejectCall = async () => { setIncomingCall(false); if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "ended", callBy: username }); };
-    const endVideoCall = async () => { setShowVideoCall(false); setLivekitToken(null); setCallStatus(null); if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "ended", callBy: username }); };
-    const sendReaction = async (emoji) => { await addDoc(collection(db, "reactions"), { roomId, emoji, username, createdAt: new Date() }); };
-    const handleEmojiSelect = (emoji) => { setNewMessage(prev => prev + emoji); };
+    const rejectCall = useCallback(async () => {
+        setIncomingCall(false);
+        if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "ended", callBy: username });
+    }, [roomDocId, username]);
 
-    const sendMessage = async (msg) => {
-        const text = msg || newMessage.trim();
+    // Bug 1 fix: null the token FIRST — this unmounts <LiveKitRoom>, which fires
+    // RoomDisconnector's cleanup, stopping all hardware tracks before React tears down.
+    const endVideoCall = useCallback(async () => {
+        setLivekitToken(null);          // triggers RoomDisconnector unmount → hardware released
+        setShowVideoCall(false);
+        setCallStatus(null);
+        if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "ended", callBy: username });
+    }, [roomDocId, username]);
+
+    const sendReaction = useCallback(async (emoji) => {
+        await addDoc(collection(db, "reactions"), { roomId, emoji, username, createdAt: new Date() });
+    }, [roomId, username]);
+
+    const handleEmojiSelect = useCallback((emoji) => { setNewMessage(prev => prev + emoji); }, []);
+
+    // Fix: sendMessage previously captured newMessage and replyTo in its dep array,
+    // creating a new function reference on every keystroke. Storing them in refs
+    // lets us always read the latest values at send-time without the instability.
+    const newMessageRef = useRef(newMessage);
+    const replyToRef = useRef(replyTo);
+    useEffect(() => { newMessageRef.current = newMessage; }, [newMessage]);
+    useEffect(() => { replyToRef.current = replyTo; }, [replyTo]);
+
+    const sendMessage = useCallback(async (msg) => {
+        const text = msg || newMessageRef.current.trim();
         if (!text) return;
         if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { typing: "" }).catch(() => { });
         clearTimeout(typingTimeoutRef.current);
         const encrypted = await encryptMessage(text, roomId);
         const chatDoc = { roomId, username, message: encrypted, createdAt: new Date(), readBy: [username] };
-        if (replyTo) {
-            chatDoc.replyToId = replyTo.id;
-            chatDoc.replyToUsername = replyTo.username;
-            chatDoc.replyToMessage = await encryptMessage(replyTo.message, roomId);
+        const currentReplyTo = replyToRef.current;
+        if (currentReplyTo) {
+            chatDoc.replyToId = currentReplyTo.id;
+            chatDoc.replyToUsername = currentReplyTo.username;
+            chatDoc.replyToMessage = await encryptMessage(currentReplyTo.message, roomId);
         }
         await addDoc(collection(db, "chats"), chatDoc);
         if (!msg) setNewMessage("");
         setReplyTo(null);
-    };
+        // newMessage and replyTo are intentionally read via refs — not listed as deps.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [roomDocId, roomId, username]);
 
-    const handleVoiceSend = async (audioBlob, duration) => {
+    const handleVoiceSend = useCallback(async (audioBlob, duration) => {
         setShowVoiceRecorder(false);
         try {
             showToast("Voice message upload ஆகுது...", "🎙️", "#8e44ad");
@@ -776,7 +936,7 @@ function Room() {
             await addDoc(collection(db, "chats"), { roomId, username, message: encLabel, voiceUrl: data.secure_url, type: "voice", createdAt: new Date() });
             showToast("Voice message sent! 🎙️", "✅", "#27ae60");
         } catch (err) { showToast("Voice send fail: " + err.message, "❌", "#e74c3c"); }
-    };
+    }, [roomId, username, showToast]);
 
     const T = isDark ? {
         bg: "#0f0f0f", card: "#1a1a1a", card2: "#2a2a2a",
@@ -789,13 +949,26 @@ function Room() {
     };
 
     if (!nameSet) {
+        // Bug 6 fix: show env-var warning banner before the name gate so devs
+        // catch the problem immediately during development or after a bad deploy.
         return (
-            <div style={{ backgroundColor: T.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ backgroundColor: T.bg, minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+                {MISSING_ENV.length > 0 && (
+                    <div style={{ width: "100%", maxWidth: "480px", backgroundColor: "rgba(231,76,60,0.15)", border: "1px solid rgba(231,76,60,0.5)", borderRadius: "12px", padding: "16px 20px", marginBottom: "24px" }}>
+                        <p style={{ color: "#e74c3c", fontSize: "14px", fontWeight: "bold", margin: "0 0 8px 0" }}>⚠️ Missing Environment Variables</p>
+                        {MISSING_ENV.map(k => (
+                            <p key={k} style={{ color: "#e74c3c", fontSize: "12px", fontFamily: "monospace", margin: "2px 0" }}>• {k}</p>
+                        ))}
+                        <p style={{ color: "#aaa", fontSize: "11px", margin: "8px 0 0 0" }}>
+                            Add these to your <code>.env</code> file or Vercel/Netlify dashboard, then redeploy.
+                        </p>
+                    </div>
+                )}
                 <div style={{ backgroundColor: T.card, borderRadius: "16px", padding: "40px", width: "100%", maxWidth: "380px", textAlign: "center", border: `1px solid ${T.border}` }}>
                     <h2 style={{ color: T.text, fontSize: "24px", marginBottom: "24px" }}>👋 உன் பேர் என்ன?</h2>
                     <input type="text" placeholder="உன் பேர் type பண்ணு..." value={username}
                         onChange={(e) => setUsername(e.target.value)}
-                        onKeyPress={(e) => e.key === "Enter" && username.trim() && setNameSet(true)}
+                        onKeyDown={(e) => e.key === "Enter" && username.trim() && setNameSet(true)}
                         style={{ width: "100%", padding: "12px 16px", backgroundColor: T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", color: T.text, fontSize: "16px", marginBottom: "16px", boxSizing: "border-box", outline: "none" }}
                         autoFocus />
                     <button onClick={() => username.trim() && setNameSet(true)}
@@ -841,7 +1014,7 @@ function Room() {
 
             <div style={{ display: "flex", flex: 1, height: showChat ? "calc(100vh - 50vh)" : "100vh", flexDirection: "column", transition: "height 0.3s ease" }}>
                 <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-                    <div style={isFullscreen
+                    <div ref={playerContainerRef} style={isFullscreen
                         ? { position: "fixed", inset: 0, zIndex: 8999, backgroundColor: "#000" }
                         : { flex: 1, backgroundColor: T.playerBg, position: "relative", minHeight: "0", overflow: "hidden" }
                     }>
@@ -861,8 +1034,37 @@ function Room() {
                                                 pendingYtCmdRef.current = [];
                                                 queue.forEach(func => sendYtCmd(func));
                                             }
+                                            // Bug 3: if room is already playing when we load, show sync prompt
+                                            if (isPlaying) setNeedsUserGesture(true);
                                         }, 1500);
                                     }} />
+
+                                {/* Bug 3 fix: "Click to Sync" overlay shown when autoplay is blocked.
+                                    A real user click satisfies browser autoplay policy so play works. */}
+                                {needsUserGesture && (
+                                    <div
+                                        onClick={() => {
+                                            setNeedsUserGesture(false);
+                                            sendYtCmd("unMute");
+                                            sendYtCmd("playVideo");
+                                        }}
+                                        style={{
+                                            position: "absolute", inset: 0, zIndex: 20,
+                                            backgroundColor: "rgba(0,0,0,0.65)",
+                                            display: "flex", flexDirection: "column",
+                                            alignItems: "center", justifyContent: "center",
+                                            cursor: "pointer", gap: "12px",
+                                        }}>
+                                        <div style={{ fontSize: "56px" }}>▶️</div>
+                                        <p style={{ color: "white", fontSize: "18px", fontWeight: "bold", margin: 0 }}>
+                                            Tap to Sync & Play
+                                        </p>
+                                        <p style={{ color: "#aaa", fontSize: "13px", margin: 0 }}>
+                                            Browser autoplay block — ஒரு click போதும்!
+                                        </p>
+                                    </div>
+                                )}
+
                                 <div style={{ position: "absolute", bottom: "16px", left: "50%", transform: "translateX(-50%)", zIndex: 10 }}>
                                     <button onClick={() => { const p = !isPlaying; setIsPlaying(p); updatePlayState(p); }}
                                         style={{ padding: "8px 24px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", backgroundColor: isPlaying ? "#555" : "#ff6b35" }}>
@@ -877,7 +1079,9 @@ function Room() {
                                 onSeeked={handleSeek} />
                         )}
                         {floatingReactions.map((r) => (
-                            <div key={r.id} style={{ position: "absolute", bottom: "20px", left: `${r.x}%`, fontSize: "40px", animation: "floatUp 3s ease-out forwards", pointerEvents: "none", zIndex: 10 }}>{r.emoji}</div>
+                            // Bug 4 fix: x is now a pixel string (e.g. "142px") clamped to the
+                            // real container width, not a bare percentage that can go off-screen.
+                            <div key={r.id} style={{ position: "absolute", bottom: "20px", left: r.x, fontSize: "40px", animation: "floatUp 3s ease-out forwards", pointerEvents: "none", zIndex: 10 }}>{r.emoji}</div>
                         ))}
                     </div>
 
@@ -1035,7 +1239,7 @@ function Room() {
                                         style={{ padding: "10px", backgroundColor: showEmojiPicker ? "#ff6b35" : T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>😊</button>
                                     <input type="text" placeholder={replyTo ? "↩ Replying..." : "Message type பண்ணு..."} value={newMessage}
                                         onChange={handleTyping}
-                                        onKeyPress={(e) => e.key === "Enter" && sendMessage()}
+                                        onKeyDown={(e) => e.key === "Enter" && sendMessage()}
                                         style={{ flex: 1, padding: "10px 12px", backgroundColor: T.card2, border: `1px solid ${replyTo ? "#ff6b35" : T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", outline: "none", minWidth: 0 }} />
                                     <button onClick={() => setShowVoiceRecorder(true)}
                                         style={{ padding: "10px", backgroundColor: T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>🎙️</button>
@@ -1077,6 +1281,7 @@ function Room() {
             {showVideoCall && livekitToken && (
                 <LiveKitRoom token={livekitToken} serverUrl={import.meta.env.VITE_LIVEKIT_URL} connect={true} video={true} audio={true} onDisconnected={endVideoCall}>
                     <RoomAudioRenderer />
+                    <RoomDisconnector onDisconnected={endVideoCall} />
                     <CallUI isFullscreen={isFullscreen} onEnd={endVideoCall} />
                 </LiveKitRoom>
             )}
