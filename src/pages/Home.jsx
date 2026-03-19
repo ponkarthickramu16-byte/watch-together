@@ -38,13 +38,15 @@ function Home({ user }) {
     const [activeTab, setActiveTab] = useState("create");
     const [history, setHistory] = useState([]);
     const [historyLoading, setHistoryLoading] = useState(true);
-    const [historyError, setHistoryError] = useState(""); // ✅ Bug fix #2
+    const [historyError, setHistoryError] = useState("");
+    const [indexCreateUrl, setIndexCreateUrl] = useState("");
     const [roomType, setRoomType] = useState("couple");
 
     // ✅ Bug fix #4 — prevent double-click creating 2 rooms
     const creatingRef = useRef(false);
 
     // ✅ Bug fix #2 & #3 — show error if history fails, handle null displayName
+    // Bug fix #1 — capture the Firebase-provided index creation URL from the error message
     useEffect(() => {
         const userName = user?.displayName || user?.email || null;
         if (!userName) {
@@ -64,8 +66,11 @@ function Home({ user }) {
             },
             (err) => {
                 console.error("History load error:", err);
-                // Firestore index இல்லன்னா இந்த link-ல create பண்ணலாம்
                 if (err.code === "failed-precondition") {
+                    // Firebase embeds the direct index-creation URL inside the error message.
+                    // Extract it so the user can click straight through to the right page.
+                    const urlMatch = err.message?.match(/https:\/\/console\.firebase\.google\.com[^\s]+/);
+                    setIndexCreateUrl(urlMatch ? urlMatch[0] : "https://console.firebase.google.com/project/_/firestore/indexes");
                     setHistoryError("index");
                 } else {
                     setHistoryError("general");
@@ -307,14 +312,17 @@ function Home({ user }) {
                     {/* ✅ Bug fix #2 — show index error with fix link */}
                     {historyError === "index" && (
                         <div style={{ backgroundColor: "rgba(243,156,18,0.15)", border: "1px solid rgba(243,156,18,0.3)", borderRadius: "10px", padding: "14px", marginBottom: "16px" }}>
-                            <p style={{ color: "#f39c12", fontSize: "13px", margin: "0 0 8px 0", fontWeight: "bold" }}>⚠️ Firestore Index வேணும்!</p>
-                            <p style={{ color: "#aaa", fontSize: "12px", margin: "0 0 10px 0" }}>Firebase Console-ல index create பண்ணணும்:</p>
-                            <a href="https://console.firebase.google.com/project/watch-together-948fc/firestore/indexes"
+                            <p style={{ color: "#f39c12", fontSize: "13px", margin: "0 0 8px 0", fontWeight: "bold" }}>⚠️ Firestore Composite Index வேணும்!</p>
+                            <p style={{ color: "#aaa", fontSize: "12px", margin: "0 0 10px 0" }}>
+                                <code style={{ backgroundColor: "rgba(0,0,0,0.3)", padding: "2px 6px", borderRadius: "4px", fontSize: "11px" }}>watchedBy (Asc) + watchedAt (Desc)</code> index create ஆகல.
+                                கீழே உள்ள link-ல click பண்ணி Firebase automatically create பண்ணும்:
+                            </p>
+                            <a href={indexCreateUrl}
                                 target="_blank" rel="noreferrer"
-                                style={{ color: "#f39c12", fontSize: "12px" }}>
-                                🔗 Firebase Console → Indexes → Add index
+                                style={{ display: "inline-block", color: "white", fontSize: "12px", fontWeight: "bold", backgroundColor: "#f39c12", padding: "6px 14px", borderRadius: "8px", textDecoration: "none" }}>
+                                🔗 Create Index in Firebase Console →
                             </a>
-                            <p style={{ color: "#666", fontSize: "11px", margin: "8px 0 0 0" }}>Collection: watchHistory | Fields: watchedBy (Asc) + watchedAt (Desc)</p>
+                            <p style={{ color: "#666", fontSize: "11px", margin: "8px 0 0 0" }}>Link click பண்ணி "Create index" button press பண்ணு. சில minutes-ல ready ஆகும்.</p>
                         </div>
                     )}
 

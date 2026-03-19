@@ -56,7 +56,23 @@ const encryptMessage = async (text, roomId) => {
 const decryptMessage = async (cipherB64, roomId) => {
     try {
         const key = await getCryptoKey(roomId);
-        const combined = Uint8Array.from(atob(cipherB64), c => c.charCodeAt(0));
+        // Bug fix #4: sanitize the Base64 string before atob().
+        // atob() throws a DOMException on any non-Base64 character or wrong padding,
+        // which would propagate up and break the chat UI for everyone in the room.
+        // We strip whitespace, fix padding, and catch decoding errors independently
+        // so a single corrupt message degrades gracefully (shows raw text) instead of
+        // crashing the whole snapshot handler.
+        let sanitized = cipherB64.replace(/\s/g, "");
+        const remainder = sanitized.length % 4;
+        if (remainder === 2) sanitized += "==";
+        else if (remainder === 3) sanitized += "=";
+        let combined;
+        try {
+            combined = Uint8Array.from(atob(sanitized), c => c.charCodeAt(0));
+        } catch {
+            // Not valid Base64 at all — return as plaintext
+            return cipherB64;
+        }
         const iv = combined.slice(0, 12); const cipher = combined.slice(12);
         const decrypted = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, cipher);
         return new TextDecoder().decode(decrypted);
@@ -110,9 +126,11 @@ function VoiceRecorder({ onSend, onCancel, T }) {
     const mediaRecorderRef = useRef(null);
     const chunksRef = useRef([]);
     const timerRef = useRef(null);
+    const streamRef = useRef(null); // Bug fix #3: track stream for cleanup
     const startRecording = async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            streamRef.current = stream; // Bug fix #3: store stream ref
             const mr = new MediaRecorder(stream);
             mediaRecorderRef.current = mr; chunksRef.current = [];
             mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
@@ -134,6 +152,21 @@ function VoiceRecorder({ onSend, onCancel, T }) {
         if (recording) stopRecording();
         setAudioBlob(null); setAudioUrl(null); setSeconds(0); onCancel();
     };
+
+    // Bug fix #3: Cleanup on unmount — stops mic stream and timer if user
+    // navigates away while recording, preventing memory leaks.
+    useEffect(() => {
+        return () => {
+            clearInterval(timerRef.current);
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+                try { mediaRecorderRef.current.stop(); } catch { }
+            }
+            if (streamRef.current) {
+                streamRef.current.getTracks().forEach(t => t.stop());
+                streamRef.current = null;
+            }
+        };
+    }, []);
     const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
     return (
         <div style={{ padding: "10px 12px", borderTop: `1px solid ${T.border}`, backgroundColor: T.card, display: "flex", alignItems: "center", gap: "8px" }}>
@@ -384,9 +417,11 @@ function Room() {
     const prevOnlineRef = useRef([]);
 
     // FIX 1: YouTube refs defined early - before any useEffect
+    // pendingYtCmdRef is now a QUEUE (array) — multiple commands before player ready
+    // are all preserved and flushed in order, not overwritten by the last one.
     const ytSrcRef = useRef(null);
     const ytReadyRef = useRef(false);
-    const pendingYtCmdRef = useRef(null);
+    const pendingYtCmdRef = useRef([]);
 
     useEffect(() => { usernameRef.current = username; }, [username]);
     useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
@@ -395,7 +430,7 @@ function Room() {
     useEffect(() => {
         ytSrcRef.current = null;
         ytReadyRef.current = false;
-        pendingYtCmdRef.current = null;
+        pendingYtCmdRef.current = [];
     }, [roomId]);
 
     useEffect(() => {
@@ -412,13 +447,24 @@ function Room() {
     }, []);
 
     useEffect(() => {
+        // NOTE (Bug fix #5): This is client-side CSS/JS only.
+        // It discourages casual screenshots but CANNOT prevent OS-level tools
+        // (Win+Shift+S, macOS Cmd+Shift+3, phone cameras, etc.).
+        // Do NOT use this as a security guarantee for protected content.
         const style = document.createElement("style");
         style.id = "screenshot-block";
         style.textContent = `* { -webkit-user-select: none !important; user-select: none !important; } input, textarea { -webkit-user-select: text !important; user-select: text !important; }`;
         document.head.appendChild(style);
         const blockPrint = (e) => {
-            if (e.key === "PrintScreen") { e.preventDefault(); navigator.clipboard.writeText("").catch(() => { }); showToast("Screenshot block! 🚫", "🚫", "#e74c3c"); }
-            if (e.ctrlKey && e.shiftKey && e.key === "S") { e.preventDefault(); showToast("Screenshot block! 🚫", "🚫", "#e74c3c"); }
+            if (e.key === "PrintScreen") {
+                e.preventDefault();
+                navigator.clipboard.writeText("").catch(() => { });
+                showToast("Screenshot shortcut detected 🚫 (OS tools still work)", "🚫", "#e74c3c");
+            }
+            if (e.ctrlKey && e.shiftKey && e.key === "S") {
+                e.preventDefault();
+                showToast("Screenshot shortcut detected 🚫 (OS tools still work)", "🚫", "#e74c3c");
+            }
         };
         window.addEventListener("keydown", blockPrint);
         return () => { document.getElementById("screenshot-block")?.remove(); window.removeEventListener("keydown", blockPrint); };
@@ -442,7 +488,9 @@ function Room() {
         if (ytReadyRef.current) {
             try { iframeRef.current.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args: [] }), "*"); } catch { }
         } else {
-            pendingYtCmdRef.current = func;
+            // Queue commands instead of overwriting — prevents race condition
+            // where a seek arrives after a play and only the seek survives.
+            pendingYtCmdRef.current.push(func);
         }
     }, []);
 
@@ -452,7 +500,10 @@ function Room() {
                 const d = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
                 if (d?.event === "onReady" || (d?.event === "infoDelivery" && !ytReadyRef.current)) {
                     ytReadyRef.current = true;
-                    if (pendingYtCmdRef.current) { sendYtCmd(pendingYtCmdRef.current); pendingYtCmdRef.current = null; }
+                    // Flush the entire command queue in order
+                    const queue = pendingYtCmdRef.current;
+                    pendingYtCmdRef.current = [];
+                    queue.forEach(func => sendYtCmd(func));
                 }
             } catch { }
         };
@@ -805,10 +856,10 @@ function Room() {
                                         setTimeout(() => {
                                             if (!ytReadyRef.current) {
                                                 ytReadyRef.current = true;
-                                                if (pendingYtCmdRef.current) {
-                                                    sendYtCmd(pendingYtCmdRef.current);
-                                                    pendingYtCmdRef.current = null;
-                                                }
+                                                // Flush the full command queue in order
+                                                const queue = pendingYtCmdRef.current;
+                                                pendingYtCmdRef.current = [];
+                                                queue.forEach(func => sendYtCmd(func));
                                             }
                                         }, 1500);
                                     }} />
