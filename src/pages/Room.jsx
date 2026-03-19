@@ -737,8 +737,18 @@ function Room() {
         });
     }, [roomId, markMessagesRead]);
 
+    // Reactions flood fix: page load timestamp store பண்றோம்.
+    // இதுக்கு முன்னாடி Firestore-ல இருந்த reactions page reload-ல
+    // ஒரே நேரத்துல animate ஆகும் — அதை தடுக்க session start time use பண்றோம்.
+    const sessionStartRef = useRef(new Date());
+
     useEffect(() => {
-        const q = query(collection(db, "reactions"), where("roomId", "==", roomId), orderBy("createdAt", "asc"));
+        const q = query(
+            collection(db, "reactions"),
+            where("roomId", "==", roomId),
+            where("createdAt", ">", sessionStartRef.current),
+            orderBy("createdAt", "asc")
+        );
         return onSnapshot(q, (snap) => {
             snap.docChanges().forEach(change => {
                 if (change.type === "added") {
@@ -755,9 +765,6 @@ function Room() {
                         x = "45%";
                     }
                     setFloatingReactions(prev => [...prev, { id, emoji, x }]);
-                    // Bug 5 fix: 3s-ல UI-ல மறைக்கிறோம் + Firestore-லயும் delete பண்றோம்.
-                    // இல்லன்னா reconnect ஆனா எல்லா past reactions-உம் ஒரே நேரத்துல
-                    // animate ஆகும், collection unlimited-ஆ grow ஆகும். ✅
                     setTimeout(() => {
                         setFloatingReactions(prev => prev.filter(r => r.id !== id));
                         deleteDoc(doc(db, "reactions", id)).catch(() => { });
@@ -1033,7 +1040,9 @@ function Room() {
                                 <iframe ref={iframeRef}
                                     src={getYouTubeSrc(youtubeId)}
                                     style={{ width: "100%", height: "100%", border: "none" }}
-                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                    sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"
+                                    allowFullScreen
                                     onLoad={() => {
                                         // YouTube iframe loaded - wait 1.5s for API to init, then mark ready
                                         setTimeout(() => {
@@ -1078,7 +1087,14 @@ function Room() {
                                 )}
 
                                 <div style={{ position: "absolute", bottom: "16px", left: "50%", transform: "translateX(-50%)", zIndex: 10 }}>
-                                    <button onClick={() => { const p = !isPlaying; setIsPlaying(p); updatePlayState(p); }}
+                                    <button onClick={() => {
+                                        const p = !isPlaying;
+                                        setIsPlaying(p);
+                                        updatePlayState(p);
+                                        // Play Sync fix: Firestore round-trip-க்கு wait பண்ணாம
+                                        // directly YouTube command அனுப்புறோம் — instant response.
+                                        sendYtCmd(p ? "playVideo" : "pauseVideo");
+                                    }}
                                         style={{ padding: "8px 24px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", backgroundColor: isPlaying ? "#555" : "#ff6b35" }}>
                                         {isPlaying ? "⏸ Pause Sync" : "▶ Play Sync"}
                                     </button>
