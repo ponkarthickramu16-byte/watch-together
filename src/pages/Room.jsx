@@ -274,11 +274,14 @@ function LocalVideo({ small }) {
         };
         tryAttach();
         const iv = setInterval(tryAttach, 800);
-        setTimeout(() => clearInterval(iv), 15000);
+        // Bug 1 fix: timeout id-ஐ store பண்ணி cleanup-ல clear பண்றோம்.
+        // இல்லன்னா component unmount ஆனாலும் 15s-ல stale closure fire ஆகும்.
+        const stopTimer = setTimeout(() => clearInterval(iv), 15000);
         localParticipant.on("localTrackPublished", tryAttach);
         localParticipant.on("trackPublished", tryAttach);
         return () => {
             clearInterval(iv);
+            clearTimeout(stopTimer);
             localParticipant.off("localTrackPublished", tryAttach);
             localParticipant.off("trackPublished", tryAttach);
             try { for (const pub of localParticipant.videoTrackPublications.values()) { const track = pub.videoTrack ?? pub.track; if (track && videoRef.current) track.detach(videoRef.current); } } catch { }
@@ -314,11 +317,13 @@ function RemoteVideo({ small }) {
         };
         tryAttach();
         const iv = setInterval(tryAttach, 800);
-        setTimeout(() => clearInterval(iv), 20000);
+        // Bug 1 fix: timeout id-ஐ store பண்ணி cleanup-ல clear பண்றோம்.
+        const stopTimer = setTimeout(() => clearInterval(iv), 20000);
         remoteParticipant.on("trackSubscribed", tryAttach);
         remoteParticipant.on("trackPublished", tryAttach);
         return () => {
             clearInterval(iv);
+            clearTimeout(stopTimer);
             remoteParticipant.off("trackSubscribed", tryAttach);
             remoteParticipant.off("trackPublished", tryAttach);
             try { for (const pub of remoteParticipant.videoTrackPublications.values()) { const track = pub.videoTrack ?? pub.track; if (track && videoRef.current) track.detach(videoRef.current); } } catch { }
@@ -527,6 +532,11 @@ function Room() {
         const t = setTimeout(() => { joinedRef.current = true; }, 2000);
         return () => clearTimeout(t);
     }, [nameSet]);
+
+    // Bug 3 fix: isPlayingRef — onLoad-ல setTimeout closure-க்குள்ள
+    // isPlaying state stale ஆகிடும். Ref மூலம் latest value படிக்கிறோம்.
+    const isPlayingRef = useRef(isPlaying);
+    useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
 
     const showToast = useCallback((message, icon = "🔔", color = "#27ae60") => {
         const id = Date.now() + Math.random();
@@ -1034,8 +1044,10 @@ function Room() {
                                                 pendingYtCmdRef.current = [];
                                                 queue.forEach(func => sendYtCmd(func));
                                             }
-                                            // Bug 3: if room is already playing when we load, show sync prompt
-                                            if (isPlaying) setNeedsUserGesture(true);
+                                            // Bug 3 fix: isPlayingRef.current use பண்றோம்.
+                                            // isPlaying state இந்த 1.5s-க்குள்ள மாறியிருக்கலாம் —
+                                            // stale closure-ஆ படிச்சா wrong overlay காட்டும்.
+                                            if (isPlayingRef.current) setNeedsUserGesture(true);
                                         }, 1500);
                                     }} />
 

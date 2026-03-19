@@ -41,6 +41,9 @@ function Home({ user }) {
     const [historyError, setHistoryError] = useState("");
     const [indexCreateUrl, setIndexCreateUrl] = useState("");
     const [roomType, setRoomType] = useState("couple");
+    // Bug 2 fix: linkLoading-ஐ இங்க declare பண்றோம் — functions-க்கு முன்னாடி.
+    // முன்னாடி line 137-ல handleFileUpload-க்கு பிறகு இருந்தது — Rules of Hooks violation.
+    const [linkLoading, setLinkLoading] = useState(false);
 
     // ✅ Bug fix #4 — prevent double-click creating 2 rooms
     const creatingRef = useRef(false);
@@ -133,8 +136,6 @@ function Home({ user }) {
     const handleFileChange = (e) => { const f = e.target.files[0]; if (f) handleFileUpload(f); e.target.value = ""; };
     const handleDrop = (e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFileUpload(f); };
 
-    // ✅ Bug fix #4 — loading state for YouTube/link
-    const [linkLoading, setLinkLoading] = useState(false);
     const handleYouTubeOrLink = async () => {
         if (linkLoading || creatingRef.current) return;
         const url = movieUrl.trim();
