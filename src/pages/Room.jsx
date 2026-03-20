@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { db } from "../firebase";
 import {
     collection, query, where, onSnapshot,
-    updateDoc, doc, addDoc, orderBy, arrayUnion, getDoc, deleteDoc,
+    updateDoc, doc, addDoc, orderBy, arrayUnion, getDoc, deleteDoc, writeBatch,
 } from "firebase/firestore";
 import {
     LiveKitRoom,
@@ -26,6 +26,7 @@ const EMOJI_CATEGORIES = [
 ];
 
 const getYouTubeId = (url) => {
+    if (!url || typeof url !== "string") return null;
     const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
     return match ? match[1] : null;
 };
@@ -54,15 +55,20 @@ if (MISSING_ENV.length > 0) {
 // Cache இல்லாம 50 messages = 50 × 100k = 50 lakh iterations → mobile freeze.
 // Cache வச்சா first message மட்டும் 100k iterations, மீதி instant. ✅
 const _keyCache = new Map();
+const MAX_KEY_CACHE = 20; // max unique rooms per session
 const getCryptoKey = async (roomId) => {
     if (_keyCache.has(roomId)) return _keyCache.get(roomId);
+    // Evict oldest entry if cache is full
+    if (_keyCache.size >= MAX_KEY_CACHE) {
+        _keyCache.delete(_keyCache.keys().next().value);
+    }
     const encoder = new TextEncoder();
     const keyMaterial = await window.crypto.subtle.importKey(
         "raw", encoder.encode(roomId.padEnd(32, "0").substring(0, 32)),
         "PBKDF2", false, ["deriveKey"]
     );
     const key = await window.crypto.subtle.deriveKey(
-        { name: "PBKDF2", salt: encoder.encode("watch-together-salt"), iterations: 100000, hash: "SHA-256" },
+        { name: "PBKDF2", salt: encoder.encode("watch-together-salt"), iterations: 50000, hash: "SHA-256" },
         keyMaterial, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]
     );
     _keyCache.set(roomId, key);
@@ -91,7 +97,9 @@ const encryptMessage = async (text, roomId) => {
 // Per-message decrypt cache keyed by firestoreId.
 // Prevents re-running AES-GCM on the same ciphertext every Firestore snapshot.
 // Cleared on roomId change (see Reset YouTube + history useEffect).
+// Size-limited to 500 entries (LRU eviction) to prevent unbounded growth.
 const _decryptCache = new Map();
+const MAX_DECRYPT_CACHE = 500;
 
 const decryptMessage = async (cipherB64, roomId) => {
     try {
@@ -221,8 +229,8 @@ function VoiceRecorder({ onSend, onCancel, T }) {
         setAudioBlob(null); setAudioUrl(null); setSeconds(0); onCancel();
     };
 
-    // Bug fix #3: Cleanup on unmount — stops mic stream and timer if user
-    // navigates away while recording, preventing memory leaks.
+    // Bug fix #3: Cleanup on unmount — stops mic stream, timer, and revokes
+    // any object URL to prevent memory leaks.
     useEffect(() => {
         return () => {
             clearInterval(timerRef.current);
@@ -233,6 +241,8 @@ function VoiceRecorder({ onSend, onCancel, T }) {
                 streamRef.current.getTracks().forEach(t => t.stop());
                 streamRef.current = null;
             }
+            // Revoke object URL to free memory
+            setAudioUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null; });
         };
     }, []);
     const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -529,15 +539,45 @@ function Room() {
 
     useEffect(() => { usernameRef.current = username; }, [username]);
     useEffect(() => { showChatRef.current = showChat; if (showChat) setUnreadCount(0); }, [showChat]);
-    useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+    // Smart scroll: only jump to bottom when the user is already near the bottom
+    // (within 150 px) OR when the very last message is their own send.
+    // This lets them scroll up to read history without being yanked back down.
+    const chatScrollRef = useRef(null);
+    useEffect(() => {
+        const container = chatScrollRef.current;
+        if (!container) { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); return; }
+        const { scrollTop, scrollHeight, clientHeight } = container;
+        const nearBottom = scrollHeight - scrollTop - clientHeight < 150;
+        const lastMsg = messages[messages.length - 1];
+        const isMine = lastMsg?.username === usernameRef.current;
+        if (nearBottom || isMine) {
+            chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }
+    }, [messages]);
 
-    // Reset YouTube + history flag on room change
+    // Reset YouTube state on room change OR movieUrl change within same room.
+    // ytSrcRef caches the src string — must be cleared when the video changes
+    // so getYouTubeSrc() builds a fresh URL for the new video.
+    const prevMovieUrlRef = useRef(null);
+    useEffect(() => {
+        const movieUrlChanged = prevMovieUrlRef.current !== null &&
+            prevMovieUrlRef.current !== (roomData?.movieUrl ?? null);
+        prevMovieUrlRef.current = roomData?.movieUrl ?? null;
+        if (movieUrlChanged) {
+            ytSrcRef.current = null;
+            ytReadyRef.current = false;
+            pendingYtCmdRef.current = [];
+        }
+    }, [roomData?.movieUrl]);
+
     useEffect(() => {
         ytSrcRef.current = null;
         ytReadyRef.current = false;
         pendingYtCmdRef.current = [];
         historyLoggedRef.current = false; // reset so history logs in new room
-        _decryptCache.clear();               // stale ciphertext must not survive room change
+        _decryptCache.clear();            // stale ciphertext must not survive room change
+        _keyCache.clear();                // derived keys are room-specific — clear on change
+        prevMovieUrlRef.current = null;
     }, [roomId]);
 
     useEffect(() => {
@@ -602,7 +642,10 @@ function Room() {
         } else {
             // Queue commands instead of overwriting — prevents race condition
             // where a seek arrives after a play and only the seek survives.
-            pendingYtCmdRef.current.push(func);
+            // Cap at 10 to prevent unbounded growth if player never becomes ready.
+            if (pendingYtCmdRef.current.length < 10) {
+                pendingYtCmdRef.current.push(func);
+            }
         }
     }, []);
 
@@ -672,7 +715,8 @@ function Room() {
             const me = usernameRef.current;
 
             // Call status
-            if (data.callStatus === "calling" && data.callBy !== me) { setCallerName(data.callBy || "Partner"); setIncomingCall(true); }
+            // Only show incoming call if not already in a call
+            if (data.callStatus === "calling" && data.callBy !== me && !showVideoCall) { setCallerName(data.callBy || "Partner"); setIncomingCall(true); }
             if (data.callStatus === "idle" || data.callStatus === "ended") {
                 setIncomingCall(false);
                 if (data.callBy !== me) { setLivekitToken(null); setShowVideoCall(false); setCallStatus(null); }
@@ -727,15 +771,26 @@ function Room() {
 
     const markMessagesRead = useCallback(async (msgs) => {
         if (!roomId || !username) return;
-        // FIX 7: Only process truly unread messages from others
         const unread = msgs.filter(m =>
             m.username !== username &&
             !(m.readBy || []).includes(username) &&
             m.firestoreId
         );
-        for (const m of unread) {
-            updateDoc(doc(db, "chats", m.firestoreId), { readBy: arrayUnion(username) }).catch(() => { });
-        }
+        if (unread.length === 0) return;
+        // Batch all readBy updates into a single Firestore commit —
+        // avoids N parallel updateDoc calls that risk hitting rate limits.
+        try {
+            // Firestore batch limit = 500 ops. Chunk into groups of 400 for safety.
+            const BATCH_SIZE = 400;
+            for (let i = 0; i < unread.length; i += BATCH_SIZE) {
+                const chunk = unread.slice(i, i + BATCH_SIZE);
+                const batch = writeBatch(db);
+                chunk.forEach(m => {
+                    batch.update(doc(db, "chats", m.firestoreId), { readBy: arrayUnion(username) });
+                });
+                await batch.commit();
+            }
+        } catch { }
     }, [roomId, username]);
 
     useEffect(() => {
@@ -752,9 +807,15 @@ function Room() {
                 }
                 const plain = await decryptMessage(msg.message, roomId);
                 let replyPlain = null;
-                if (msg.replyToMessage) replyPlain = await decryptMessage(msg.replyToMessage, roomId);
+                if (typeof msg.replyToMessage === "string" && msg.replyToMessage.length > 0) replyPlain = await decryptMessage(msg.replyToMessage, roomId);
                 const cached = { message: plain, replyToMessageDecrypted: replyPlain };
-                if (cacheKey) _decryptCache.set(cacheKey, cached);
+                if (cacheKey) {
+                    // LRU evict oldest entry if over limit
+                    if (_decryptCache.size >= MAX_DECRYPT_CACHE) {
+                        _decryptCache.delete(_decryptCache.keys().next().value);
+                    }
+                    _decryptCache.set(cacheKey, cached);
+                }
                 return { ...msg, ...cached };
             }));
             setMessages(decrypted);
@@ -888,11 +949,16 @@ function Room() {
         setTimeout(() => { isSyncingSeekRef.current = false; }, 1500);
     }, [roomDocId]);
 
+    const lastTypingSentRef = useRef(0);
     const handleTyping = useCallback(async (e) => {
         setNewMessage(e.target.value);
         if (!roomDocId) return;
         clearTimeout(typingWriteRef.current);
         typingWriteRef.current = setTimeout(async () => {
+            // Throttle: max 1 Firestore write per second for typing indicator
+            const now = Date.now();
+            if (now - lastTypingSentRef.current < 1000) return;
+            lastTypingSentRef.current = now;
             await updateDoc(doc(db, "rooms", roomDocId), { typing: username }).catch(() => { });
         }, 300);
         clearTimeout(typingTimeoutRef.current);
@@ -903,7 +969,12 @@ function Room() {
 
     const fetchToken = useCallback(async () => {
         const url = `/api/token?roomName=room-${roomId}&participantName=${encodeURIComponent(username)}`;
-        const r = await fetch(url);
+        let r;
+        try {
+            r = await fetch(url);
+        } catch {
+            throw new Error("Network error — internet connection check பண்ணு");
+        }
         if (!r.ok) { const err = await r.json().catch(() => ({})); throw new Error(err.error || "Token fetch failed"); }
         const d = await r.json();
         if (!d.token) throw new Error("No token received");
@@ -960,8 +1031,14 @@ function Room() {
     const sendMessage = useCallback(async (msg) => {
         const text = msg || newMessageRef.current.trim();
         if (!text) return;
-        if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { typing: "" }).catch(() => { });
+        // 2000 char limit — prevents huge Firestore docs and expensive encrypts
+        if (text.length > 2000) {
+            return;
+        }
+        // Clear pending typing timers so they don't fire after message is sent
+        clearTimeout(typingWriteRef.current);
         clearTimeout(typingTimeoutRef.current);
+        if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { typing: "" }).catch(() => { });
         const encrypted = await encryptMessage(text, roomId);
         const chatDoc = { roomId, username, message: encrypted, createdAt: new Date(), readBy: [username] };
         const currentReplyTo = replyToRef.current;
@@ -979,7 +1056,17 @@ function Room() {
 
     const handleVoiceSend = useCallback(async (audioBlob, duration) => {
         setShowVoiceRecorder(false);
+        // Guard: 5 MB max — Cloudinary free tier limit is 10 MB, but large files
+        // cause slow uploads on mobile. 5 MB ≈ 8 min of webm audio — more than enough.
+        const MAX_BYTES = 5 * 1024 * 1024;
+        if (audioBlob.size > MAX_BYTES) {
+            showToast(`Voice message too large (${(audioBlob.size / 1024 / 1024).toFixed(1)} MB). Max 5 MB.`, "❌", "#e74c3c");
+            return;
+        }
         try {
+            if (!import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || !import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET) {
+                throw new Error("Cloudinary config missing — .env check பண்ணு");
+            }
             showToast("Voice message upload ஆகுது...", "🎙️", "#8e44ad");
             const formData = new FormData();
             formData.append("file", audioBlob, "voice.webm");
@@ -1242,7 +1329,7 @@ function Room() {
                                 <span style={{ color: "#ff6b35", fontSize: "13px" }}>👤 {username}</span>
                             </div>
 
-                            <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                            <div ref={chatScrollRef} style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
                                 {messages.length === 0 && <p style={{ color: T.text3, textAlign: "center", fontSize: "13px" }}>message இல்ல - first message பண்ணு! 👋</p>}
                                 {messages.map((msg) => {
                                     const isMe = msg.username === username;
