@@ -88,6 +88,11 @@ const encryptMessage = async (text, roomId) => {
     } catch { return text; }
 };
 
+// Per-message decrypt cache keyed by firestoreId.
+// Prevents re-running AES-GCM on the same ciphertext every Firestore snapshot.
+// Cleared on roomId change (see Reset YouTube + history useEffect).
+const _decryptCache = new Map();
+
 const decryptMessage = async (cipherB64, roomId) => {
     try {
         const key = await getCryptoKey(roomId);
@@ -500,6 +505,7 @@ function Room() {
 
     const [needsUserGesture, setNeedsUserGesture] = useState(false); // Bug 3: autoplay block detection
     const prevParticipantsRef = useRef([]);
+    const participantsInitializedRef = useRef(false); // skip toast on first load
     const playerContainerRef = useRef(null); // Bug 4: measure actual player bounds for emoji positioning
     const iframeRef = useRef(null);
     const videoRef = useRef(null);
@@ -511,7 +517,8 @@ function Room() {
     const historyLoggedRef = useRef(false);
     const joinedRef = useRef(false);
     const prevOnlineRef = useRef([]);
-    const showChatRef = useRef(false);
+    const showChatRef = useRef(true); // must match showChat useState(true) initial value
+    const reactionTimers = useRef([]); // cleanup floating reaction timeouts on unmount
 
     // FIX 1: YouTube refs defined early - before any useEffect
     // pendingYtCmdRef is now a QUEUE (array) — multiple commands before player ready
@@ -524,11 +531,13 @@ function Room() {
     useEffect(() => { showChatRef.current = showChat; if (showChat) setUnreadCount(0); }, [showChat]);
     useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-    // Reset YouTube on room change
+    // Reset YouTube + history flag on room change
     useEffect(() => {
         ytSrcRef.current = null;
         ytReadyRef.current = false;
         pendingYtCmdRef.current = [];
+        historyLoggedRef.current = false; // reset so history logs in new room
+        _decryptCache.clear();               // stale ciphertext must not survive room change
     }, [roomId]);
 
     useEffect(() => {
@@ -617,17 +626,16 @@ function Room() {
     useEffect(() => {
         if (!roomData?.movieUrl || !getYouTubeId(roomData.movieUrl)) return;
         if (isPlaying) {
-            // Bug 3: Browsers block autoplay with sound. We first mute, play,
-            // then immediately unmute — this satisfies the autoplay policy.
-            // If even that fails (very restrictive policy), show a user-gesture overlay.
+            // Mute first → play → unmute satisfies browser autoplay policy.
+            // Both timers stored so cleanup cancels them if user pauses
+            // before 700ms — prevents video getting stuck muted.
+            const unMuteTimer = setTimeout(() => sendYtCmd("unMute"), 700);
             const t = setTimeout(() => {
                 sendYtCmd("mute");
                 sendYtCmd("playVideo");
-                // Unmute after a short delay; user can also unmute manually.
-                setTimeout(() => sendYtCmd("unMute"), 500);
                 setNeedsUserGesture(false);
             }, 200);
-            return () => clearTimeout(t);
+            return () => { clearTimeout(t); clearTimeout(unMuteTimer); };
         } else {
             const t = setTimeout(() => { sendYtCmd("pauseVideo"); setNeedsUserGesture(false); }, 200);
             return () => clearTimeout(t);
@@ -672,9 +680,14 @@ function Room() {
 
             // Participants join toast
             if (data.participants && Array.isArray(data.participants)) {
-                const prev = prevParticipantsRef.current;
-                const newOnes = data.participants.filter(p => p !== me && !prev.includes(p));
-                newOnes.forEach(p => showToast(`${p} join ஆனாங்க! 🎉`, "💚", "#27ae60"));
+                if (!participantsInitializedRef.current) {
+                    // First snapshot — silently initialize, no toast for pre-existing members
+                    participantsInitializedRef.current = true;
+                } else {
+                    const prev = prevParticipantsRef.current;
+                    const newOnes = data.participants.filter(p => p !== me && !prev.includes(p));
+                    newOnes.forEach(p => showToast(`${p} join ஆனாங்க! 🎉`, "💚", "#27ae60"));
+                }
                 prevParticipantsRef.current = data.participants;
             }
 
@@ -732,10 +745,17 @@ function Room() {
             const decrypted = await Promise.all(rawMsgs.map(async (msg) => {
                 if (msg.type === "voice") return msg;
                 if (!msg.message) return msg;
+                // Cache hit: skip re-decrypting messages we've already seen
+                const cacheKey = msg.firestoreId;
+                if (cacheKey && _decryptCache.has(cacheKey)) {
+                    return { ...msg, ..._decryptCache.get(cacheKey) };
+                }
                 const plain = await decryptMessage(msg.message, roomId);
                 let replyPlain = null;
                 if (msg.replyToMessage) replyPlain = await decryptMessage(msg.replyToMessage, roomId);
-                return { ...msg, message: plain, replyToMessageDecrypted: replyPlain };
+                const cached = { message: plain, replyToMessageDecrypted: replyPlain };
+                if (cacheKey) _decryptCache.set(cacheKey, cached);
+                return { ...msg, ...cached };
             }));
             setMessages(decrypted);
             markMessagesRead(decrypted);
@@ -753,6 +773,11 @@ function Room() {
     // இதுக்கு முன்னாடி Firestore-ல இருந்த reactions page reload-ல
     // ஒரே நேரத்துல animate ஆகும் — அதை தடுக்க session start time use பண்றோம்.
     const sessionStartRef = useRef(new Date());
+
+    // Cleanup all pending reaction timers on unmount
+    useEffect(() => {
+        return () => { reactionTimers.current.forEach(t => clearTimeout(t)); };
+    }, []);
 
     useEffect(() => {
         const q = query(
@@ -777,10 +802,13 @@ function Room() {
                         x = "45%";
                     }
                     setFloatingReactions(prev => [...prev, { id, emoji, x }]);
-                    setTimeout(() => {
+                    // Store timer id so we can cancel if component unmounts,
+                    // preventing setState-after-unmount React warning.
+                    const reactionTimer = setTimeout(() => {
                         setFloatingReactions(prev => prev.filter(r => r.id !== id));
                         deleteDoc(doc(db, "reactions", id)).catch(() => { });
                     }, 3000);
+                    reactionTimers.current.push(reactionTimer);
                 }
             });
         });
@@ -1111,11 +1139,16 @@ function Room() {
                                     </button>
                                 </div>
                             </div>
-                        ) : (
+                        ) : roomData.movieUrl ? (
                             <video ref={videoRef} src={roomData.movieUrl} controls style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
                                 onPlay={() => { if (joinedRef.current) updatePlayState(true, videoRef.current?.currentTime); }}
                                 onPause={() => { if (joinedRef.current) updatePlayState(false, videoRef.current?.currentTime); }}
                                 onSeeked={handleSeek} />
+                        ) : (
+                            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "12px" }}>
+                                <span style={{ fontSize: "48px" }}>🎬</span>
+                                <p style={{ color: "#666", fontSize: "15px", margin: 0 }}>Movie URL இல்ல — Home-ல URL add பண்ணு</p>
+                            </div>
                         )}
                         {floatingReactions.map((r) => (
                             // Bug 4 fix: x is now a pixel string (e.g. "142px") clamped to the
