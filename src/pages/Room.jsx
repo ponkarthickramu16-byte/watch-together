@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { usePushNotifications } from "../hooks/usePushNotifications";
 import { db } from "../firebase";
 import {
     collection, query, where, onSnapshot,
@@ -552,9 +551,8 @@ function Room() {
 
     useEffect(() => { usernameRef.current = username; }, [username]);
 
-    // 🔔 Push notifications — registers FCM token when user joins room
-    const pushResult = usePushNotifications({ roomId, username, enabled: nameSet });
-    const registerToken = pushResult?.registerToken ?? (async () => false);
+    // 🔔 Push notifications — temporarily disabled (TODO: re-enable)
+    const registerToken = async () => false;
     useEffect(() => { showVideoCallRef.current = showVideoCall; }, [showVideoCall]);
     useEffect(() => { showChatRef.current = showChat; if (showChat) setUnreadCount(0); }, [showChat]);
     // Smart scroll: only jump to bottom when the user is already near the bottom
