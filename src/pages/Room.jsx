@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { usePushNotifications } from "../hooks/usePushNotifications";
 import { db } from "../firebase";
 import {
     collection, query, where, onSnapshot,
@@ -520,6 +521,7 @@ function Room() {
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
     const [replyTo, setReplyTo] = useState(null);
+    const [editingMsg, setEditingMsg] = useState(null); // { id, message } - message being edited
     const [unreadCount, setUnreadCount] = useState(0);
     const [onlineUsers, setOnlineUsers] = useState([]);
 
@@ -549,6 +551,9 @@ function Room() {
     const pendingYtCmdRef = useRef([]);
 
     useEffect(() => { usernameRef.current = username; }, [username]);
+
+    // 🔔 Push notifications — registers FCM token when user joins room
+    usePushNotifications({ roomId, username, enabled: nameSet });
     useEffect(() => { showVideoCallRef.current = showVideoCall; }, [showVideoCall]);
     useEffect(() => { showChatRef.current = showChat; if (showChat) setUnreadCount(0); }, [showChat]);
     // Smart scroll: only jump to bottom when the user is already near the bottom
@@ -1104,6 +1109,13 @@ function Room() {
     useEffect(() => { replyToRef.current = replyTo; }, [replyTo]);
 
     const sendMessage = useCallback(async (msg) => {
+        // Edit mode: save edit instead of sending new message
+        if (editingMsg && !msg) {
+            const text = newMessageRef.current.trim();
+            if (text) await editMessage(editingMsg.id, text);
+            else { setEditingMsg(null); setNewMessage(""); }
+            return;
+        }
         const text = msg || newMessageRef.current.trim();
         if (!text) return;
         // 2000 char limit — prevents huge Firestore docs and expensive encrypts
@@ -1126,9 +1138,46 @@ function Room() {
         await addDoc(collection(db, "chats"), chatDoc);
         if (!msg) setNewMessage("");
         setReplyTo(null);
+        // 🔔 Trigger push notification to partner (fire-and-forget)
+        fetch("/api/notify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                roomId,
+                senderUsername: username,
+                messagePreview: text.substring(0, 60), // preview, not encrypted
+            }),
+        }).catch(() => { }); // silent fail if not deployed
         // newMessage and replyTo are intentionally read via refs — not listed as deps.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [roomDocId, roomId, username, showToast]);
+    }, [roomDocId, roomId, username, showToast, editMessage]);
+
+    // ── Edit message ────────────────────────────────────────────────────
+    const editMessage = useCallback(async (msgId, newText) => {
+        if (!newText.trim() || newText.length > 2000) return;
+        try {
+            const encrypted = await encryptMessage(newText.trim(), roomId);
+            await updateDoc(doc(db, "chats", msgId), {
+                message: encrypted,
+                editedAt: new Date(),
+            });
+            // Update decrypt cache so UI reflects immediately
+            if (_decryptCache.has(msgId)) {
+                const old = _decryptCache.get(msgId);
+                _decryptCache.set(msgId, { ...old, message: newText.trim() });
+            }
+            setEditingMsg(null);
+            setNewMessage("");
+        } catch (err) { showToast("Edit fail: " + err.message, "❌", "#e74c3c"); }
+    }, [roomId, showToast]);
+
+    // ── Delete message ────────────────────────────────────────────────
+    const deleteMessage = useCallback(async (msgId) => {
+        try {
+            await deleteDoc(doc(db, "chats", msgId));
+            _decryptCache.delete(msgId);
+        } catch (err) { showToast("Delete fail: " + err.message, "❌", "#e74c3c"); }
+    }, [showToast]);
 
     const handleVoiceSend = useCallback(async (audioBlob, duration) => {
         setShowVoiceRecorder(false);
@@ -1349,6 +1398,11 @@ function Room() {
                             style={{ padding: "8px 14px", backgroundColor: "#8e44ad", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>⛶ Full Screen</button>
                         <button onClick={() => setShowHistory(true)}
                             style={{ padding: "8px 14px", backgroundColor: "#2980b9", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>🎬 History</button>
+                        <button onClick={async () => {
+                            const perm = await Notification.requestPermission();
+                            showToast(perm === "granted" ? "🔔 Notifications ON!" : "🔕 Notifications blocked", perm === "granted" ? "🔔" : "🔕", perm === "granted" ? "#27ae60" : "#e74c3c");
+                        }}
+                            style={{ padding: "8px 14px", backgroundColor: "#7f8c8d", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>🔔 Notify</button>
                         <button onClick={() => setIsDark(!isDark)}
                             style={{ padding: "8px 14px", backgroundColor: isDark ? "#f39c12" : "#2c3e50", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
                             {isDark ? "☀️ Light" : "🌙 Dark"}
@@ -1403,8 +1457,20 @@ function Room() {
                                     const isRead = (msg.readBy || []).length > 1;
                                     return (
                                         <div key={msg.id}
-                                            style={{ maxWidth: "85%", alignSelf: isMe ? "flex-end" : "flex-start", display: "flex", flexDirection: "column", gap: "2px" }}
+                                            style={{ maxWidth: "85%", alignSelf: isMe ? "flex-end" : "flex-start", display: "flex", flexDirection: "column", gap: "2px", position: "relative" }}
+                                            onContextMenu={(e) => { e.preventDefault(); if (msg.type !== "voice") setReplyTo({ id: msg.id, username: msg.username, message: msg.message }); }}
                                             onClick={() => { if (msg.type !== "voice") setReplyTo({ id: msg.id, username: msg.username, message: msg.message }); }}>
+                                            {/* Edit/Delete actions for own messages */}
+                                            {isMe && msg.type !== "voice" && (
+                                                <div style={{ display: "flex", gap: "4px", alignSelf: "flex-end", marginBottom: "2px" }}>
+                                                    <button onClick={(e) => { e.stopPropagation(); setEditingMsg({ id: msg.id, message: msg.message }); setNewMessage(msg.message); }}
+                                                        style={{ background: "none", border: "none", cursor: "pointer", fontSize: "13px", color: T.text3, padding: "2px 4px", borderRadius: "4px" }}
+                                                        title="Edit">✏️</button>
+                                                    <button onClick={(e) => { e.stopPropagation(); if (window.confirm("Delete this message?")) deleteMessage(msg.id); }}
+                                                        style={{ background: "none", border: "none", cursor: "pointer", fontSize: "13px", color: T.text3, padding: "2px 4px", borderRadius: "4px" }}
+                                                        title="Delete">🗑️</button>
+                                                </div>
+                                            )}
                                             {msg.replyToMessageDecrypted && (
                                                 <div style={{ backgroundColor: isMe ? "rgba(0,0,0,0.2)" : "rgba(255,255,255,0.1)", borderLeft: "3px solid #ff6b35", borderRadius: "6px", padding: "4px 8px", marginBottom: "2px" }}>
                                                     <p style={{ color: isMe ? "rgba(255,255,255,0.7)" : T.text2, fontSize: "10px", margin: "0 0 2px 0", fontWeight: "bold" }}>↩ {msg.replyToUsername}</p>
@@ -1425,6 +1491,7 @@ function Room() {
                                                 )}
                                                 {isMe && (
                                                     <span style={{ alignSelf: "flex-end", marginTop: "2px", fontSize: "11px", color: isRead ? "#a8e6cf" : "rgba(255,255,255,0.5)" }}>
+                                                        {msg.editedAt && <span style={{ fontSize: "10px", marginRight: "4px", opacity: 0.7 }}>edited</span>}
                                                         {isRead ? "✓✓" : "✓"}
                                                     </span>
                                                 )}
@@ -1449,7 +1516,18 @@ function Room() {
 
                             {!showVoiceRecorder && (
                                 <div style={{ borderTop: `1px solid ${T.border}` }}>
-                                    {replyTo && (
+                                    {/* Edit mode bar */}
+                                    {editingMsg && (
+                                        <div style={{ padding: "6px 12px", backgroundColor: "rgba(52,152,219,0.15)", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${T.border}`, borderLeft: "3px solid #3498db" }}>
+                                            <div style={{ display: "flex", alignItems: "center", gap: "6px", flex: 1, minWidth: 0 }}>
+                                                <span style={{ fontSize: "13px" }}>✏️</span>
+                                                <p style={{ color: "#3498db", fontSize: "11px", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Editing message</p>
+                                            </div>
+                                            <button onClick={() => { setEditingMsg(null); setNewMessage(""); }}
+                                                style={{ background: "none", border: "none", color: T.text3, cursor: "pointer", fontSize: "16px", padding: "0 4px", flexShrink: 0 }}>✕</button>
+                                        </div>
+                                    )}
+                                    {replyTo && !editingMsg && (
                                         <div style={{ padding: "6px 12px", backgroundColor: T.card2, display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${T.border}` }}>
                                             <div style={{ display: "flex", alignItems: "center", gap: "6px", flex: 1, minWidth: 0 }}>
                                                 <span style={{ color: "#ff6b35", fontSize: "12px" }}>↩</span>
@@ -1467,14 +1545,18 @@ function Room() {
                                         )}
                                         <button onClick={() => setShowEmojiPicker(p => !p)}
                                             style={{ padding: "10px", backgroundColor: showEmojiPicker ? "#ff6b35" : T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>😊</button>
-                                        <input type="text" placeholder={replyTo ? "↩ Replying..." : "Message type பண்ணு..."} value={newMessage}
+                                        <input type="text"
+                                            placeholder={editingMsg ? "Edit message..." : replyTo ? "↩ Replying..." : "Message type பண்ணு..."}
+                                            value={newMessage}
                                             onChange={handleTyping}
-                                            onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-                                            style={{ flex: 1, padding: "10px 12px", backgroundColor: T.card2, border: `1px solid ${replyTo ? "#ff6b35" : T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", outline: "none", minWidth: 0 }} />
+                                            onKeyDown={(e) => { if (e.key === "Enter") sendMessage(); if (e.key === "Escape") { setEditingMsg(null); setNewMessage(""); setReplyTo(null); } }}
+                                            style={{ flex: 1, padding: "10px 12px", backgroundColor: T.card2, border: `1px solid ${editingMsg ? "#3498db" : replyTo ? "#ff6b35" : T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", outline: "none", minWidth: 0 }} />
                                         <button onClick={() => setShowVoiceRecorder(true)}
                                             style={{ padding: "10px", backgroundColor: T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>🎙️</button>
                                         <button onClick={() => sendMessage()}
-                                            style={{ padding: "10px 14px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>➤</button>
+                                            style={{ padding: "10px 14px", backgroundColor: editingMsg ? "#3498db" : "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>
+                                            {editingMsg ? "💾" : "➤"}
+                                        </button>
                                     </div>
                                 </div>
                             )}
