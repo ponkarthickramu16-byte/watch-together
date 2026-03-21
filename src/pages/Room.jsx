@@ -553,7 +553,8 @@ function Room() {
     useEffect(() => { usernameRef.current = username; }, [username]);
 
     // 🔔 Push notifications — registers FCM token when user joins room
-    const { registerToken } = usePushNotifications({ roomId, username, enabled: nameSet });
+    const pushResult = usePushNotifications({ roomId, username, enabled: nameSet });
+    const registerToken = pushResult?.registerToken ?? (async () => false);
     useEffect(() => { showVideoCallRef.current = showVideoCall; }, [showVideoCall]);
     useEffect(() => { showChatRef.current = showChat; if (showChat) setUnreadCount(0); }, [showChat]);
     // Smart scroll: only jump to bottom when the user is already near the bottom
