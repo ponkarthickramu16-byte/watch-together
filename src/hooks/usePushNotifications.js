@@ -1,6 +1,6 @@
 // src/hooks/usePushNotifications.js
-// Simple version - no dynamic import, no getMessaging (avoids circular dep)
-// FCM token registration happens manually via button click only
+// Minimal version - no firebase/messaging import at module level
+// Uses raw service worker postMessage to get FCM token
 
 import { useEffect, useRef, useCallback } from "react";
 import { db } from "../firebase";
@@ -15,10 +15,7 @@ export function usePushNotifications({ roomId, username, enabled = true }) {
         if (!("Notification" in window) || !("serviceWorker" in navigator)) return false;
 
         const VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY;
-        if (!VAPID_KEY) {
-            console.warn("[push] VITE_FIREBASE_VAPID_KEY not set");
-            return false;
-        }
+        if (!VAPID_KEY) return false;
 
         try {
             const permission = Notification.permission === "granted"
@@ -26,17 +23,24 @@ export function usePushNotifications({ roomId, username, enabled = true }) {
                 : await Notification.requestPermission();
             if (permission !== "granted") return false;
 
-            // Lazy-load firebase/messaging ONLY when needed to avoid circular dep
-            const { getMessaging, getToken } = await import("firebase/messaging");
-
+            // Use service worker directly - no firebase/messaging import needed
             const sw = await navigator.serviceWorker.register(
                 "/firebase-messaging-sw.js", { scope: "/" }
             );
+            await navigator.serviceWorker.ready;
 
-            const messaging = getMessaging();
-            const token = await getToken(messaging, {
-                vapidKey: VAPID_KEY,
-                serviceWorkerRegistration: sw,
+            // Ask SW to get FCM token for us
+            const token = await new Promise((resolve, reject) => {
+                const channel = new MessageChannel();
+                channel.port1.onmessage = (e) => {
+                    if (e.data?.token) resolve(e.data.token);
+                    else reject(new Error(e.data?.error || "No token"));
+                };
+                sw.active?.postMessage(
+                    { type: "GET_FCM_TOKEN", vapidKey: VAPID_KEY },
+                    [channel.port2]
+                );
+                setTimeout(() => reject(new Error("Token timeout")), 10000);
             });
 
             if (!token) return false;
@@ -46,16 +50,15 @@ export function usePushNotifications({ roomId, username, enabled = true }) {
             await setDoc(tokenDocRef.current, {
                 roomId, username, token, updatedAt: new Date(),
             });
-
             registeredRef.current = true;
             return true;
         } catch (err) {
-            console.warn("[push] error:", err.message);
+            console.warn("[push]", err.message);
             return false;
         }
     }, [roomId, username]);
 
-    // Auto-register if permission already granted (user previously allowed)
+    // Auto-register if already permitted
     useEffect(() => {
         if (!enabled || !roomId || !username) return;
         if (Notification.permission === "granted" && !registeredRef.current) {
@@ -63,7 +66,7 @@ export function usePushNotifications({ roomId, username, enabled = true }) {
         }
     }, [enabled, roomId, username, registerToken]);
 
-    // Cleanup on unmount
+    // Cleanup token on leave
     useEffect(() => {
         return () => {
             if (tokenDocRef.current) {
