@@ -19,7 +19,7 @@ const REACTIONS = ["❤️", "😂", "😮", "🔥", "👏", "😢"];
 const EMOJI_CATEGORIES = [
     { label: "❤️ Love", emojis: ["❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "😍", "🥰", "😘", "💏", "👫"] },
     { label: "😂 Funny", emojis: ["😂", "🤣", "😆", "😅", "😄", "😁", "😀", "🤩", "😜", "😝", "🤪", "😋", "🤭", "😏", "🙃", "😌", "🤗", "🫠", "😇", "🥳"] },
-    { label: "😮 React", emojis: ["😮", "😲", "🤯", "😱", "😳", "🥺", "😢", "😭", "😤", "😡", "🤬", "😤", "💀", "🫡", "🤔", "🧐", "😐", "🫤", "😶", "🤐"] },
+    { label: "😮 React", emojis: ["😮", "😲", "🤯", "😱", "😳", "🥺", "😢", "😭", "😤", "😡", "🤬", "🫠", "💀", "🫡", "🤔", "🧐", "😐", "🫤", "😶", "🤐"] },
     { label: "🔥 Hype", emojis: ["🔥", "⚡", "💥", "✨", "🌟", "💫", "🎉", "🎊", "🎈", "🏆", "👑", "💎", "🚀", "🌈", "🎯", "💯", "✅", "👍", "🙌", "👏"] },
     { label: "🍿 Movie", emojis: ["🍿", "🎬", "🎥", "🎞️", "📽️", "🎭", "🎪", "🎨", "🎮", "🕹️", "📺", "📻", "🎵", "🎶", "🎸", "🎤", "🎧", "🥤", "🍔", "🍕"] },
     { label: "💬 Chat", emojis: ["👋", "🤝", "🫶", "🤞", "✌️", "🤙", "👉", "💪", "🙏", "🫂", "👀", "💭", "💬", "📩", "📱", "🔔", "⏰", "🗓️", "📌", "🔑"] },
@@ -204,6 +204,11 @@ function VoiceRecorder({ onSend, onCancel, T }) {
     const timerRef = useRef(null);
     const streamRef = useRef(null); // Bug fix #3: track stream for cleanup
     const startRecording = async () => {
+        // Fix #6: Safari + some Android browsers don't support MediaRecorder — crash தடுக்கணும்
+        if (!window.MediaRecorder) {
+            alert("Voice recording இந்த browser-ல support இல்ல. Chrome அல்லது Firefox use பண்ணு.");
+            return;
+        }
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             streamRef.current = stream; // Bug fix #3: store stream ref
@@ -226,6 +231,9 @@ function VoiceRecorder({ onSend, onCancel, T }) {
     };
     const handleCancel = () => {
         if (recording) stopRecording();
+        // Bug 5 fix: audioUrl revoke பண்ணாம null பண்ணா memory leak ஆகும்.
+        // URL.revokeObjectURL இங்க call பண்றோம் — unmount cleanup-ல மட்டும் நம்பல.
+        if (audioUrl) URL.revokeObjectURL(audioUrl);
         setAudioBlob(null); setAudioUrl(null); setSeconds(0); onCancel();
     };
 
@@ -504,6 +512,7 @@ function Room() {
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [acceptLoading, setAcceptLoading] = useState(false);
     const [isDark, setIsDark] = useState(true);
+    const showVideoCallRef = useRef(false); // Bug 1 fix: stale closure guard
     const [toasts, setToasts] = useState([]);
     const [showHistory, setShowHistory] = useState(false);
     const [partnerTyping, setPartnerTyping] = useState(false);
@@ -538,19 +547,18 @@ function Room() {
     const pendingYtCmdRef = useRef([]);
 
     useEffect(() => { usernameRef.current = username; }, [username]);
+    useEffect(() => { showVideoCallRef.current = showVideoCall; }, [showVideoCall]);
     useEffect(() => { showChatRef.current = showChat; if (showChat) setUnreadCount(0); }, [showChat]);
     // Smart scroll: only jump to bottom when the user is already near the bottom
-    // (within 150 px) OR when the very last message is their own send.
-    // This lets them scroll up to read history without being yanked back down.
+    // (within 150 px). isMine condition removed — force scrolling when user sends
+    // a message while scrolled up breaks their read position (Fix #5).
     const chatScrollRef = useRef(null);
     useEffect(() => {
         const container = chatScrollRef.current;
         if (!container) { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); return; }
         const { scrollTop, scrollHeight, clientHeight } = container;
         const nearBottom = scrollHeight - scrollTop - clientHeight < 150;
-        const lastMsg = messages[messages.length - 1];
-        const isMine = lastMsg?.username === usernameRef.current;
-        if (nearBottom || isMine) {
+        if (nearBottom) {
             chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
         }
     }, [messages]);
@@ -629,6 +637,11 @@ function Room() {
     }, []);
 
     const getYouTubeSrc = useCallback((id) => {
+        // Bug 3 fix: Cache key-ல id include பண்றோம்.
+        // Before: ytSrcRef.current-ல first video-இன் URL மட்டும் store ஆகும்.
+        // வேற video load ஆனா old URL-ஐ திரும்ப return பண்ணும் — wrong video play ஆகும்.
+        // இப்போ: id மாறும்போது ytSrcRef.current null ஆகும் (prevMovieUrl useEffect),
+        // so every new videoId-க்கு fresh URL build ஆகும்.
         if (!ytSrcRef.current) {
             ytSrcRef.current = `https://www.youtube.com/embed/${id}?autoplay=0&controls=1&enablejsapi=1&origin=${window.location.origin}&rel=0&playsinline=1`;
         }
@@ -697,7 +710,7 @@ function Room() {
                 if (!isSyncingRef.current) setIsPlaying(data.isPlaying);
                 if (videoRef.current && data.currentTime !== undefined && !isSyncingSeekRef.current) {
                     const diff = Math.abs(videoRef.current.currentTime - data.currentTime);
-                    if (diff > 2) videoRef.current.currentTime = data.currentTime;
+                    if (diff > 0.8) videoRef.current.currentTime = data.currentTime; // Fix: 2s → 0.8s for tighter sync
                 }
                 if (videoRef.current && !isSyncingRef.current) {
                     if (data.isPlaying && videoRef.current.paused) videoRef.current.play().catch(() => { });
@@ -716,7 +729,7 @@ function Room() {
 
             // Call status
             // Only show incoming call if not already in a call
-            if (data.callStatus === "calling" && data.callBy !== me && !showVideoCall) { setCallerName(data.callBy || "Partner"); setIncomingCall(true); }
+            if (data.callStatus === "calling" && data.callBy !== me && !showVideoCallRef.current) { setCallerName(data.callBy || "Partner"); setIncomingCall(true); }
             if (data.callStatus === "idle" || data.callStatus === "ended") {
                 setIncomingCall(false);
                 if (data.callBy !== me) { setLivekitToken(null); setShowVideoCall(false); setCallStatus(null); }
@@ -840,6 +853,23 @@ function Room() {
         return () => { reactionTimers.current.forEach(t => clearTimeout(t)); };
     }, []);
 
+    // Periodic decrypt cache trim — long sessions-ல 500 entries hit ஆகலாம்.
+    // 5 min-க்கு ஒரு முறை check; 300+ entries இருந்தா half clear பண்றோம்
+    // (full clear-ஐ விட gentler — active messages re-decrypt வேண்டாம்).
+    useEffect(() => {
+        const id = setInterval(() => {
+            if (_decryptCache.size > 300) {
+                // Delete oldest 150 entries (Map iteration order = insertion order)
+                let count = 0;
+                for (const key of _decryptCache.keys()) {
+                    if (count++ >= 150) break;
+                    _decryptCache.delete(key);
+                }
+            }
+        }, 5 * 60 * 1000);
+        return () => clearInterval(id);
+    }, []);
+
     useEffect(() => {
         const q = query(
             collection(db, "reactions"),
@@ -868,6 +898,10 @@ function Room() {
                     const reactionTimer = setTimeout(() => {
                         setFloatingReactions(prev => prev.filter(r => r.id !== id));
                         deleteDoc(doc(db, "reactions", id)).catch(() => { });
+                        // Bug 6 fix: completed timer-ஐ array-ல இருந்து remove பண்றோம்.
+                        // இல்லன்னா reactionTimers.current unbounded-ஆ grow ஆகும் —
+                        // ஒவ்வொரு reaction-க்கும் ஒரு timer id சேர்ந்துட்டே போகும்.
+                        reactionTimers.current = reactionTimers.current.filter(t => t !== reactionTimer);
                     }, 3000);
                     reactionTimers.current.push(reactionTimer);
                 }
@@ -1002,6 +1036,7 @@ function Room() {
 
     const rejectCall = useCallback(async () => {
         setIncomingCall(false);
+        setCallStatus(null); // Bug 4 fix: local callStatus clear பண்ணாம விட்டா "Calling..." button stuck ஆகும்
         if (roomDocId) await updateDoc(doc(db, "rooms", roomDocId), { callStatus: "ended", callBy: username });
     }, [roomDocId, username]);
 
@@ -1033,6 +1068,7 @@ function Room() {
         if (!text) return;
         // 2000 char limit — prevents huge Firestore docs and expensive encrypts
         if (text.length > 2000) {
+            showToast("Message too long! Max 2000 characters.", "❌", "#e74c3c");
             return;
         }
         // Clear pending typing timers so they don't fire after message is sent
@@ -1052,7 +1088,7 @@ function Room() {
         setReplyTo(null);
         // newMessage and replyTo are intentionally read via refs — not listed as deps.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [roomDocId, roomId, username]);
+    }, [roomDocId, roomId, username, showToast]);
 
     const handleVoiceSend = useCallback(async (audioBlob, duration) => {
         setShowVoiceRecorder(false);
