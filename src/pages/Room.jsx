@@ -553,7 +553,7 @@ function Room() {
     useEffect(() => { usernameRef.current = username; }, [username]);
 
     // 🔔 Push notifications — registers FCM token when user joins room
-    usePushNotifications({ roomId, username, enabled: nameSet });
+    const { registerToken } = usePushNotifications({ roomId, username, enabled: nameSet });
     useEffect(() => { showVideoCallRef.current = showVideoCall; }, [showVideoCall]);
     useEffect(() => { showChatRef.current = showChat; if (showChat) setUnreadCount(0); }, [showChat]);
     // Smart scroll: only jump to bottom when the user is already near the bottom
@@ -1399,8 +1399,8 @@ function Room() {
                         <button onClick={() => setShowHistory(true)}
                             style={{ padding: "8px 14px", backgroundColor: "#2980b9", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>🎬 History</button>
                         <button onClick={async () => {
-                            const perm = await Notification.requestPermission();
-                            showToast(perm === "granted" ? "🔔 Notifications ON!" : "🔕 Notifications blocked", perm === "granted" ? "🔔" : "🔕", perm === "granted" ? "#27ae60" : "#e74c3c");
+                            const ok = await registerToken();
+                            showToast(ok ? "🔔 Notifications ON!" : "🔕 Browser settings-ல allow பண்ணு", ok ? "🔔" : "🔕", ok ? "#27ae60" : "#e74c3c");
                         }}
                             style={{ padding: "8px 14px", backgroundColor: "#7f8c8d", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>🔔 Notify</button>
                         <button onClick={() => setIsDark(!isDark)}
