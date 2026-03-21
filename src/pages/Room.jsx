@@ -609,27 +609,40 @@ function Room() {
     }, []);
 
     useEffect(() => {
-        // NOTE (Bug fix #5): This is client-side CSS/JS only.
-        // It discourages casual screenshots but CANNOT prevent OS-level tools
-        // (Win+Shift+S, macOS Cmd+Shift+3, phone cameras, etc.).
-        // Do NOT use this as a security guarantee for protected content.
+        // Screenshot blocking strategy:
+        // 1. CSS user-select: none — text copy தடுக்கிறோம்
+        // 2. -webkit-user-drag: none — drag-to-save தடுக்கிறோம்  
+        // 3. Keyboard shortcuts (PrintScreen, Ctrl+Shift+S) detect பண்றோம்
+        // 4. CSS media: print — print/PDF block
+        // NOTE: OS-level tools (Win+Shift+S, phone camera) block பண்ண முடியாது.
         const style = document.createElement("style");
         style.id = "screenshot-block";
-        style.textContent = `* { -webkit-user-select: none !important; user-select: none !important; } input, textarea { -webkit-user-select: text !important; user-select: text !important; }`;
+        style.textContent = `
+            * { -webkit-user-select: none !important; user-select: none !important; -webkit-user-drag: none !important; }
+            input, textarea { -webkit-user-select: text !important; user-select: text !important; }
+            @media print { body { display: none !important; } }
+        `;
         document.head.appendChild(style);
         const blockPrint = (e) => {
             if (e.key === "PrintScreen") {
                 e.preventDefault();
                 navigator.clipboard.writeText("").catch(() => { });
-                showToast("Screenshot shortcut detected 🚫 (OS tools still work)", "🚫", "#e74c3c");
+                showToast("Screenshot block! 🚫", "🚫", "#e74c3c");
             }
-            if (e.ctrlKey && e.shiftKey && e.key === "S") {
+            if ((e.ctrlKey && e.shiftKey && e.key === "S") || (e.metaKey && e.shiftKey && ["3", "4", "5"].includes(e.key))) {
                 e.preventDefault();
-                showToast("Screenshot shortcut detected 🚫 (OS tools still work)", "🚫", "#e74c3c");
+                showToast("Screenshot block! 🚫", "🚫", "#e74c3c");
             }
         };
+        // Block right-click context menu (prevents "Save image as" on video)
+        const blockContext = (e) => e.preventDefault();
         window.addEventListener("keydown", blockPrint);
-        return () => { document.getElementById("screenshot-block")?.remove(); window.removeEventListener("keydown", blockPrint); };
+        document.addEventListener("contextmenu", blockContext);
+        return () => {
+            document.getElementById("screenshot-block")?.remove();
+            window.removeEventListener("keydown", blockPrint);
+            document.removeEventListener("contextmenu", blockContext);
+        };
     }, [showToast]);
 
     useEffect(() => {
@@ -1219,148 +1232,139 @@ function Room() {
                 </div>
             )}
 
-            <div style={{ display: "flex", flex: 1, height: "100vh", flexDirection: "column", overflow: "hidden" }}>
-                <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-                    <div ref={playerContainerRef} style={isFullscreen
+            {/* ── FIXED LAYOUT: reaction bar + toolbar heights known, player fills the rest ── */}
+            <div style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", backgroundColor: T.bg }}>
+
+                {/* ── PLAYER: fills all space above the two fixed bars ── */}
+                <div
+                    ref={playerContainerRef}
+                    style={isFullscreen
                         ? { position: "fixed", inset: 0, zIndex: 8999, backgroundColor: "#000" }
-                        : { flex: 1, backgroundColor: T.playerBg, position: "relative", minHeight: 0, overflow: "hidden", height: 0 }
-                    }>
-                        {youtubeId ? (
-                            <div style={{ width: "100%", height: "100%", position: "relative" }}>
-                                <iframe ref={iframeRef}
-                                    src={getYouTubeSrc(youtubeId)}
-                                    style={{ width: "100%", height: "100%", border: "none" }}
-                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                                    allowFullScreen
-                                    onLoad={() => {
-                                        // YouTube iframe loaded - wait 1.5s for API to init, then mark ready
-                                        setTimeout(() => {
-                                            if (!ytReadyRef.current) {
-                                                ytReadyRef.current = true;
-                                                // Flush the full command queue in order
-                                                const queue = pendingYtCmdRef.current;
-                                                pendingYtCmdRef.current = [];
-                                                queue.forEach(func => sendYtCmd(func));
-                                            }
-                                            // Bug 3 fix: isPlayingRef.current use பண்றோம்.
-                                            // isPlaying state இந்த 1.5s-க்குள்ள மாறியிருக்கலாம் —
-                                            // stale closure-ஆ படிச்சா wrong overlay காட்டும்.
-                                            if (isPlayingRef.current) setNeedsUserGesture(true);
-                                        }, 1500);
-                                    }} />
+                        : { flex: 1, backgroundColor: T.playerBg, position: "relative", overflow: "hidden", minHeight: 0 }
+                    }
+                >
+                    {youtubeId ? (
+                        <div style={{ width: "100%", height: "100%", position: "relative" }}>
+                            <iframe ref={iframeRef}
+                                src={getYouTubeSrc(youtubeId)}
+                                style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                allowFullScreen
+                                onLoad={() => {
+                                    setTimeout(() => {
+                                        if (!ytReadyRef.current) {
+                                            ytReadyRef.current = true;
+                                            const queue = pendingYtCmdRef.current;
+                                            pendingYtCmdRef.current = [];
+                                            queue.forEach(func => sendYtCmd(func));
+                                        }
+                                        if (isPlayingRef.current) setNeedsUserGesture(true);
+                                    }, 1500);
+                                }} />
 
-                                {/* Bug 3 fix: "Click to Sync" overlay shown when autoplay is blocked.
-                                    A real user click satisfies browser autoplay policy so play works. */}
-                                {needsUserGesture && (
-                                    <div
-                                        onClick={() => {
-                                            setNeedsUserGesture(false);
-                                            sendYtCmd("unMute");
-                                            sendYtCmd("playVideo");
-                                        }}
-                                        style={{
-                                            position: "absolute", inset: 0, zIndex: 20,
-                                            backgroundColor: "rgba(0,0,0,0.65)",
-                                            display: "flex", flexDirection: "column",
-                                            alignItems: "center", justifyContent: "center",
-                                            cursor: "pointer", gap: "12px",
-                                        }}>
-                                        <div style={{ fontSize: "56px" }}>▶️</div>
-                                        <p style={{ color: "white", fontSize: "18px", fontWeight: "bold", margin: 0 }}>
-                                            Tap to Sync & Play
-                                        </p>
-                                        <p style={{ color: "#aaa", fontSize: "13px", margin: 0 }}>
-                                            Browser autoplay block — ஒரு click போதும்!
-                                        </p>
-                                    </div>
-                                )}
-
-                                <div style={{ position: "absolute", bottom: "16px", left: "50%", transform: "translateX(-50%)", zIndex: 10 }}>
-                                    <button onClick={() => {
-                                        const p = !isPlaying;
-                                        setIsPlaying(p);
-                                        updatePlayState(p);
-                                        // Play Sync fix: Firestore round-trip-க்கு wait பண்ணாம
-                                        // directly YouTube command அனுப்புறோம் — instant response.
-                                        sendYtCmd(p ? "playVideo" : "pauseVideo");
+                            {needsUserGesture && (
+                                <div
+                                    onClick={() => {
+                                        setNeedsUserGesture(false);
+                                        sendYtCmd("unMute");
+                                        sendYtCmd("playVideo");
                                     }}
-                                        style={{ padding: "8px 24px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", backgroundColor: isPlaying ? "#555" : "#ff6b35" }}>
-                                        {isPlaying ? "⏸ Pause Sync" : "▶ Play Sync"}
-                                    </button>
+                                    style={{
+                                        position: "absolute", inset: 0, zIndex: 20,
+                                        backgroundColor: "rgba(0,0,0,0.65)",
+                                        display: "flex", flexDirection: "column",
+                                        alignItems: "center", justifyContent: "center",
+                                        cursor: "pointer", gap: "12px",
+                                    }}>
+                                    <div style={{ fontSize: "56px" }}>▶️</div>
+                                    <p style={{ color: "white", fontSize: "18px", fontWeight: "bold", margin: 0 }}>Tap to Sync & Play</p>
+                                    <p style={{ color: "#aaa", fontSize: "13px", margin: 0 }}>Browser autoplay block — ஒரு click போதும்!</p>
                                 </div>
-                            </div>
-                        ) : roomData.movieUrl ? (
-                            <video ref={videoRef} src={roomData.movieUrl} controls style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
-                                onPlay={() => { if (joinedRef.current) updatePlayState(true, videoRef.current?.currentTime); }}
-                                onPause={() => { if (joinedRef.current) updatePlayState(false, videoRef.current?.currentTime); }}
-                                onSeeked={handleSeek} />
-                        ) : (
-                            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "12px" }}>
-                                <span style={{ fontSize: "48px" }}>🎬</span>
-                                <p style={{ color: "#666", fontSize: "15px", margin: 0 }}>Movie URL இல்ல — Home-ல URL add பண்ணு</p>
-                            </div>
-                        )}
-                        {floatingReactions.map((r) => (
-                            // Bug 4 fix: x is now a pixel string (e.g. "142px") clamped to the
-                            // real container width, not a bare percentage that can go off-screen.
-                            <div key={r.id} style={{ position: "absolute", bottom: "20px", left: r.x, fontSize: "40px", animation: "floatUp 3s ease-out forwards", pointerEvents: "none", zIndex: 10 }}>{r.emoji}</div>
-                        ))}
-                    </div>
-
-                    <div style={{ backgroundColor: T.reactionBg, padding: "8px 16px", display: "flex", gap: "6px", justifyContent: "center", alignItems: "center", borderTop: `1px solid ${T.border}` }}>
-                        {REACTIONS.map((emoji) => (
-                            <button key={emoji} onClick={() => sendReaction(emoji)}
-                                style={{ fontSize: "26px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>{emoji}</button>
-                        ))}
-                        <button onClick={() => sendReaction("🎬")} style={{ fontSize: "22px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>🎬</button>
-                        <button onClick={() => sendReaction("🥺")} style={{ fontSize: "22px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>🥺</button>
-                        <button onClick={() => sendReaction("💕")} style={{ fontSize: "22px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>💕</button>
-                    </div>
-
-                    <div style={{ backgroundColor: T.card, padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px", borderTop: `1px solid ${T.border}`, paddingBottom: showChat ? "calc(50vh + 12px)" : "12px", transition: "padding-bottom 0.3s ease" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                            <span style={{ color: T.text3, fontSize: "13px" }}>Room:</span>
-                            <span style={{ color: "#ff6b35", fontSize: "13px", fontWeight: "bold" }}>{roomId}</span>
-                            <span style={{ backgroundColor: "rgba(39,174,96,0.15)", color: "#27ae60", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "10px", padding: "2px 8px", fontSize: "11px", fontWeight: "bold" }}>🔐 Encrypted</span>
-                            {onlineUsers.filter(u => u !== username).map(u => (
-                                <span key={u} style={{ display: "flex", alignItems: "center", gap: "4px", backgroundColor: "rgba(39,174,96,0.12)", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "20px", padding: "2px 10px" }}>
-                                    <span style={{ width: "7px", height: "7px", backgroundColor: "#27ae60", borderRadius: "50%", display: "inline-block", animation: "pulse2 2s infinite" }} />
-                                    <span style={{ color: "#27ae60", fontSize: "11px", fontWeight: "bold" }}>{u} Online</span>
-                                </span>
-                            ))}
-                            {onlineUsers.filter(u => u !== username).length === 0 && nameSet && (
-                                <span style={{ display: "flex", alignItems: "center", gap: "4px", backgroundColor: "rgba(150,150,150,0.1)", border: "1px solid #333", borderRadius: "20px", padding: "2px 10px" }}>
-                                    <span style={{ width: "7px", height: "7px", backgroundColor: "#666", borderRadius: "50%", display: "inline-block" }} />
-                                    <span style={{ color: "#666", fontSize: "11px" }}>Partner Offline</span>
-                                </span>
                             )}
+
+                            <div style={{ position: "absolute", bottom: "16px", left: "50%", transform: "translateX(-50%)", zIndex: 10 }}>
+                                <button onClick={() => {
+                                    const p = !isPlaying;
+                                    setIsPlaying(p);
+                                    updatePlayState(p);
+                                    sendYtCmd(p ? "playVideo" : "pauseVideo");
+                                }}
+                                    style={{ padding: "8px 24px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", backgroundColor: isPlaying ? "#555" : "#ff6b35" }}>
+                                    {isPlaying ? "⏸ Pause Sync" : "▶ Play Sync"}
+                                </button>
+                            </div>
                         </div>
-                        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                            <button onClick={showVideoCall ? endVideoCall : startVideoCall} disabled={callStatus === "calling"}
-                                style={{ padding: "8px 14px", backgroundColor: showVideoCall ? "#e74c3c" : callStatus === "calling" ? "#666" : "#27ae60", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
-                                {showVideoCall ? "📵 Call End" : callStatus === "calling" ? "⏳ Calling..." : "📹 Video Call"}
-                            </button>
-                            <button onClick={() => setIsFullscreen(true)}
-                                style={{ padding: "8px 14px", backgroundColor: "#8e44ad", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>⛶ Full Screen</button>
-                            <button onClick={() => setShowHistory(true)}
-                                style={{ padding: "8px 14px", backgroundColor: "#2980b9", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>🎬 History</button>
-                            <button onClick={() => setIsDark(!isDark)}
-                                style={{ padding: "8px 14px", backgroundColor: isDark ? "#f39c12" : "#2c3e50", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
-                                {isDark ? "☀️ Light" : "🌙 Dark"}
-                            </button>
-                            <button onClick={() => { navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-                                style={{ padding: "8px 14px", backgroundColor: T.card2, color: T.text, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
-                                {copied ? "✅ Copied!" : "🔗 Copy Link"}
-                            </button>
-                            <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`🎬 என்னோட கூட movie பாரு! ${window.location.href}`)}`, "_blank")}
-                                style={{ padding: "8px 14px", backgroundColor: "#25D366", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>💬 WhatsApp</button>
-                            <button onClick={() => setShowChat(!showChat)}
-                                style={{ padding: "8px 14px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
-                                {showChat ? "💬 Hide Chat" : (
-                                    <>💬 Chat{unreadCount > 0 && <span style={{ marginLeft: "6px", backgroundColor: "#e74c3c", color: "white", borderRadius: "50%", padding: "1px 6px", fontSize: "11px", fontWeight: "bold" }}>{unreadCount}</span>}</>
-                                )}
-                            </button>
+                    ) : roomData.movieUrl ? (
+                        <video ref={videoRef} src={roomData.movieUrl} controls style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
+                            onPlay={() => { if (joinedRef.current) updatePlayState(true, videoRef.current?.currentTime); }}
+                            onPause={() => { if (joinedRef.current) updatePlayState(false, videoRef.current?.currentTime); }}
+                            onSeeked={handleSeek} />
+                    ) : (
+                        <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "12px" }}>
+                            <span style={{ fontSize: "48px" }}>🎬</span>
+                            <p style={{ color: "#666", fontSize: "15px", margin: 0 }}>Movie URL இல்ல — Home-ல URL add பண்ணு</p>
                         </div>
+                    )}
+                    {floatingReactions.map((r) => (
+                        <div key={r.id} style={{ position: "absolute", bottom: "20px", left: r.x, fontSize: "40px", animation: "floatUp 3s ease-out forwards", pointerEvents: "none", zIndex: 10 }}>{r.emoji}</div>
+                    ))}
+                </div>
+
+                {/* ── REACTION BAR ── */}
+                <div style={{ flexShrink: 0, backgroundColor: T.reactionBg, padding: "6px 16px", display: "flex", gap: "6px", justifyContent: "center", alignItems: "center", borderTop: `1px solid ${T.border}` }}>
+                    {REACTIONS.map((emoji) => (
+                        <button key={emoji} onClick={() => sendReaction(emoji)}
+                            style={{ fontSize: "26px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>{emoji}</button>
+                    ))}
+                    <button onClick={() => sendReaction("🎬")} style={{ fontSize: "22px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>🎬</button>
+                    <button onClick={() => sendReaction("🥺")} style={{ fontSize: "22px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>🥺</button>
+                    <button onClick={() => sendReaction("💕")} style={{ fontSize: "22px", backgroundColor: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: "8px" }}>💕</button>
+                </div>
+
+                {/* ── TOOLBAR ── */}
+                <div style={{ flexShrink: 0, backgroundColor: T.card, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "6px", borderTop: `1px solid ${T.border}` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                        <span style={{ color: T.text3, fontSize: "13px" }}>Room:</span>
+                        <span style={{ color: "#ff6b35", fontSize: "13px", fontWeight: "bold" }}>{roomId}</span>
+                        <span style={{ backgroundColor: "rgba(39,174,96,0.15)", color: "#27ae60", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "10px", padding: "2px 8px", fontSize: "11px", fontWeight: "bold" }}>🔐 Encrypted</span>
+                        {onlineUsers.filter(u => u !== username).map(u => (
+                            <span key={u} style={{ display: "flex", alignItems: "center", gap: "4px", backgroundColor: "rgba(39,174,96,0.12)", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "20px", padding: "2px 10px" }}>
+                                <span style={{ width: "7px", height: "7px", backgroundColor: "#27ae60", borderRadius: "50%", display: "inline-block", animation: "pulse2 2s infinite" }} />
+                                <span style={{ color: "#27ae60", fontSize: "11px", fontWeight: "bold" }}>{u} Online</span>
+                            </span>
+                        ))}
+                        {onlineUsers.filter(u => u !== username).length === 0 && nameSet && (
+                            <span style={{ display: "flex", alignItems: "center", gap: "4px", backgroundColor: "rgba(150,150,150,0.1)", border: "1px solid #333", borderRadius: "20px", padding: "2px 10px" }}>
+                                <span style={{ width: "7px", height: "7px", backgroundColor: "#666", borderRadius: "50%", display: "inline-block" }} />
+                                <span style={{ color: "#666", fontSize: "11px" }}>Partner Offline</span>
+                            </span>
+                        )}
+                    </div>
+                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                        <button onClick={showVideoCall ? endVideoCall : startVideoCall} disabled={callStatus === "calling"}
+                            style={{ padding: "8px 14px", backgroundColor: showVideoCall ? "#e74c3c" : callStatus === "calling" ? "#666" : "#27ae60", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
+                            {showVideoCall ? "📵 Call End" : callStatus === "calling" ? "⏳ Calling..." : "📹 Video Call"}
+                        </button>
+                        <button onClick={() => setIsFullscreen(true)}
+                            style={{ padding: "8px 14px", backgroundColor: "#8e44ad", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>⛶ Full Screen</button>
+                        <button onClick={() => setShowHistory(true)}
+                            style={{ padding: "8px 14px", backgroundColor: "#2980b9", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>🎬 History</button>
+                        <button onClick={() => setIsDark(!isDark)}
+                            style={{ padding: "8px 14px", backgroundColor: isDark ? "#f39c12" : "#2c3e50", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
+                            {isDark ? "☀️ Light" : "🌙 Dark"}
+                        </button>
+                        <button onClick={() => { navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+                            style={{ padding: "8px 14px", backgroundColor: T.card2, color: T.text, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
+                            {copied ? "✅ Copied!" : "🔗 Copy Link"}
+                        </button>
+                        <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`🎬 என்னோட கூட movie பாரு! ${window.location.href}`)}`, "_blank")}
+                            style={{ padding: "8px 14px", backgroundColor: "#25D366", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>💬 WhatsApp</button>
+                        <button onClick={() => setShowChat(!showChat)}
+                            style={{ padding: "8px 14px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
+                            {showChat ? "💬 Hide Chat" : (
+                                <>💬 Chat{unreadCount > 0 && <span style={{ marginLeft: "6px", backgroundColor: "#e74c3c", color: "white", borderRadius: "50%", padding: "1px 6px", fontSize: "11px", fontWeight: "bold" }}>{unreadCount}</span>}</>
+                            )}
+                        </button>
                     </div>
                 </div>
 
