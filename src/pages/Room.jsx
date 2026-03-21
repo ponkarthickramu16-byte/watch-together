@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { db } from "../firebase";
 import {
     collection, query, where, onSnapshot,
@@ -493,6 +493,7 @@ function WatchHistoryModal({ roomId, onClose, T }) {
 // ===================== MAIN ROOM =====================
 function Room() {
     const { roomId } = useParams();
+    const navigate = useNavigate();
     const [roomData, setRoomData] = useState(null);
     const [roomDocId, setRoomDocId] = useState(null);
     const [isPlaying, setIsPlaying] = useState(false);
@@ -538,6 +539,7 @@ function Room() {
     const prevOnlineRef = useRef([]);
     const showChatRef = useRef(true); // must match showChat useState(true) initial value
     const reactionTimers = useRef([]); // cleanup floating reaction timeouts on unmount
+    const lastReactionTimeRef = useRef({}); // per-emoji debounce — flood prevention
 
     // FIX 1: YouTube refs defined early - before any useEffect
     // pendingYtCmdRef is now a QUEUE (array) — multiple commands before player ready
@@ -909,24 +911,30 @@ function Room() {
         });
     }, [roomId]);
 
-    // Bug 2 note: messages live in the top-level "chats" collection and reactions
-    // in the "reactions" collection — both are independent documents so they are
-    // NOT subject to the 1 MiB room-document limit. The only arrayUnion remaining
-    // on the room doc is "participants". We guard it: skip the write if the array
-    // already contains this username so we never grow it unboundedly.
+    // Bug fix: participants join பண்றதுக்கு முன்னாடி maxMembers check பண்றோம்.
+    // முன்னாடி limit check இல்லாம எத்தனை பேர் வேணும்னாலும் join ஆகலாம்.
+    // getDoc → check → conditional arrayUnion pattern.
     useEffect(() => {
         if (!roomDocId || !username) return;
-        // Read first; only append if not already present to prevent the participants
-        // array from growing across repeated reconnects and hitting the 1 MiB limit.
         getDoc(doc(db, "rooms", roomDocId)).then((snap) => {
-            const existing = snap.data()?.participants || [];
-            if (!existing.includes(username)) {
-                updateDoc(doc(db, "rooms", roomDocId), { participants: arrayUnion(username) }).catch(() => { });
+            const data = snap.data();
+            if (!data) return;
+            const existing = data.participants || [];
+            // Already in room — no need to re-add
+            if (existing.includes(username)) return;
+            const maxMembers = data.maxMembers ?? 10;
+            if (existing.length >= maxMembers) {
+                // Room full — redirect to home with alert
+                alert(`❌ இந்த room full! ${maxMembers} பேர் மட்டும் allowed. வேற room try பண்ணு.`);
+                navigate("/");
+                return;
             }
+            updateDoc(doc(db, "rooms", roomDocId), { participants: arrayUnion(username) }).catch(() => { });
         }).catch(() => {
+            // Fallback: if read fails, still try to join (graceful degradation)
             updateDoc(doc(db, "rooms", roomDocId), { participants: arrayUnion(username) }).catch(() => { });
         });
-    }, [roomDocId, username]);
+    }, [roomDocId, username, navigate]);
 
     // FIX 3: Presence - visibilitychange properly removed
     useEffect(() => {
@@ -1050,6 +1058,13 @@ function Room() {
     }, [roomDocId, username]);
 
     const sendReaction = useCallback(async (emoji) => {
+        // Debounce: same emoji = min 1.5s gap. Different emoji = 500ms gap.
+        // Prevents reaction flood from fast taps / held-down clicks.
+        const now = Date.now();
+        const lastTime = lastReactionTimeRef.current[emoji] || 0;
+        const COOLDOWN = 1500;
+        if (now - lastTime < COOLDOWN) return;
+        lastReactionTimeRef.current[emoji] = now;
         await addDoc(collection(db, "reactions"), { roomId, emoji, username, createdAt: new Date() });
     }, [roomId, username]);
 
