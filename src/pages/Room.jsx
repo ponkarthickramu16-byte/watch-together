@@ -872,17 +872,26 @@ function Room() {
         return () => clearInterval(id);
     }, []);
 
+    // Reaction listener — sessionStart filter நீக்கியோம்.
+    // Problem: sessionStart = உன்னோட page load time. Partner reaction அனுப்பும் போது
+    // Firestore clock skew-ல "before your session" ஆகி skip ஆகும் → partner reaction வராது.
+    // Fix: filter இல்லாம எல்லா new reactions-உம் வாங்குறோம்.
+    // Page reload-ல old reactions re-animate ஆகாம இருக்க seenReactionIdsRef use பண்றோம்.
+    const seenReactionIdsRef = useRef(new Set());
     useEffect(() => {
         const q = query(
             collection(db, "reactions"),
             where("roomId", "==", roomId),
-            where("createdAt", ">", sessionStartRef.current),
             orderBy("createdAt", "asc")
         );
         return onSnapshot(q, (snap) => {
             snap.docChanges().forEach(change => {
                 if (change.type === "added") {
-                    const { emoji } = change.doc.data(); const id = change.doc.id;
+                    const id = change.doc.id;
+                    // Already seen (page reload replay) → skip animate, still track id
+                    if (seenReactionIdsRef.current.has(id)) return;
+                    seenReactionIdsRef.current.add(id);
+                    const { emoji } = change.doc.data();
                     const containerW = playerContainerRef.current?.offsetWidth || 0;
                     const EMOJI_PX = 40;
                     const MARGIN = 16;
@@ -911,27 +920,30 @@ function Room() {
         });
     }, [roomId]);
 
-    // Bug fix: participants join பண்றதுக்கு முன்னாடி maxMembers check பண்றோம்.
-    // முன்னாடி limit check இல்லாம எத்தனை பேர் வேணும்னாலும் join ஆகலாம்.
-    // getDoc → check → conditional arrayUnion pattern.
+    // Member limit check: participants array-ல பழைய entries இருக்கலாம் (disconnect ஆனவங்க).
+    // Fix: presence map-ல இருக்கற currently online count-ஐ பாக்குறோம் — accurate count.
     useEffect(() => {
         if (!roomDocId || !username) return;
         getDoc(doc(db, "rooms", roomDocId)).then((snap) => {
             const data = snap.data();
             if (!data) return;
-            const existing = data.participants || [];
-            // Already in room — no need to re-add
-            if (existing.includes(username)) return;
+            const participants = data.participants || [];
+            // Already in room — skip limit check (rejoin allowed)
+            if (participants.includes(username)) {
+                return;
+            }
             const maxMembers = data.maxMembers ?? 10;
-            if (existing.length >= maxMembers) {
-                // Room full — redirect to home with alert
-                alert(`❌ இந்த room full! ${maxMembers} பேர் மட்டும் allowed. வேற room try பண்ணு.`);
+            // Use presence map for accurate online count (not stale participants array)
+            const presenceMap = data.presence || {};
+            const now = Date.now();
+            const activeCount = Object.values(presenceMap).filter(ts => ts && (now - ts) < 60000).length;
+            if (activeCount >= maxMembers) {
+                alert(`❌ Room full! ${maxMembers} பேர் மட்டும் allowed. வேற room try பண்ணு.`);
                 navigate("/");
                 return;
             }
             updateDoc(doc(db, "rooms", roomDocId), { participants: arrayUnion(username) }).catch(() => { });
         }).catch(() => {
-            // Fallback: if read fails, still try to join (graceful degradation)
             updateDoc(doc(db, "rooms", roomDocId), { participants: arrayUnion(username) }).catch(() => { });
         });
     }, [roomDocId, username, navigate]);
@@ -1207,11 +1219,11 @@ function Room() {
                 </div>
             )}
 
-            <div style={{ display: "flex", flex: 1, height: "100vh", flexDirection: "column" }}>
-                <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", flex: 1, height: "100vh", flexDirection: "column", overflow: "hidden" }}>
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
                     <div ref={playerContainerRef} style={isFullscreen
                         ? { position: "fixed", inset: 0, zIndex: 8999, backgroundColor: "#000" }
-                        : { flex: 1, backgroundColor: T.playerBg, position: "relative", minHeight: "0", overflow: "hidden" }
+                        : { flex: 1, backgroundColor: T.playerBg, position: "relative", minHeight: 0, overflow: "hidden", height: 0 }
                     }>
                         {youtubeId ? (
                             <div style={{ width: "100%", height: "100%", position: "relative" }}>
