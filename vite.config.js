@@ -9,14 +9,15 @@ export default defineConfig({
       '@livekit/components-core',
       'livekit-client',
     ],
-    force: true,
   },
   build: {
+    chunkSizeWarningLimit: 2000,
     rollupOptions: {
       output: {
-        manualChunks: {
-          livekit: ['@livekit/components-react', 'livekit-client'],
-          firebase: ['firebase/app', 'firebase/firestore', 'firebase/auth'],
+        manualChunks: (id) => {
+          if (id.includes('livekit')) return 'livekit';
+          if (id.includes('firebase')) return 'firebase';
+          if (id.includes('node_modules')) return 'vendor';
         },
       },
     },
