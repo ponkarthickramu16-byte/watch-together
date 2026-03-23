@@ -668,15 +668,24 @@ function Room() {
             const decrypted = await Promise.all(rawMsgs.map(async (msg) => {
                 if (msg.type === "voice") return msg;
                 if (!msg.message) return msg;
-                // Cache hit: skip re-decrypting messages we've already seen
+                // Cache hit: skip re-decrypting — but invalidate if message was edited
                 const cacheKey = msg.firestoreId;
                 if (cacheKey && _decryptCache.has(cacheKey)) {
-                    return { ...msg, ..._decryptCache.get(cacheKey) };
+                    const cached = _decryptCache.get(cacheKey);
+                    // editedAt changed → message was edited → must re-decrypt
+                    const cachedEditedAt = cached._editedAt ?? null;
+                    const msgEditedAt = msg.editedAt?.toMillis?.() ?? msg.editedAt ?? null;
+                    if (cachedEditedAt === msgEditedAt) {
+                        return { ...msg, ...cached };
+                    }
+                    // Cache stale — fall through to re-decrypt
                 }
                 const plain = await decryptMessage(msg.message, roomId);
                 let replyPlain = null;
                 if (typeof msg.replyToMessage === "string" && msg.replyToMessage.length > 0) replyPlain = await decryptMessage(msg.replyToMessage, roomId);
-                const cached = { message: plain, replyToMessageDecrypted: replyPlain };
+                // Store editedAt in cache so we can detect future edits
+                const msgEditedAt = msg.editedAt?.toMillis?.() ?? msg.editedAt ?? null;
+                const cached = { message: plain, replyToMessageDecrypted: replyPlain, _editedAt: msgEditedAt };
                 if (cacheKey) {
                     // LRU evict oldest entry if over limit
                     if (_decryptCache.size >= MAX_DECRYPT_CACHE) {
@@ -953,10 +962,14 @@ function Room() {
                 message: encrypted,
                 editedAt: new Date(),
             });
-            // Update decrypt cache so UI reflects immediately
+            // Update decrypt cache immediately with new text + new editedAt
+            // so UI reflects instantly without waiting for Firestore snapshot
+            const nowMillis = Date.now();
             if (_decryptCache.has(msgId)) {
                 const old = _decryptCache.get(msgId);
-                _decryptCache.set(msgId, { ...old, message: newText.trim() });
+                _decryptCache.set(msgId, { ...old, message: newText.trim(), _editedAt: nowMillis });
+            } else {
+                _decryptCache.set(msgId, { message: newText.trim(), _editedAt: nowMillis });
             }
             setEditingMsg(null);
             setNewMessage("");
