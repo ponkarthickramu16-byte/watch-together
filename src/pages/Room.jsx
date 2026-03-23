@@ -356,6 +356,7 @@ function Room() {
     const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
     const [replyTo, setReplyTo] = useState(null);
     const [editingMsg, setEditingMsg] = useState(null); // { id, message } - message being edited
+    const editingMsgRef = useRef(null); // ref to avoid stale closure in sendMessage
     const [unreadCount, setUnreadCount] = useState(0);
     const [onlineUsers, setOnlineUsers] = useState([]);
 
@@ -940,6 +941,7 @@ function Room() {
     const newMessageRef = useRef(newMessage);
     const replyToRef = useRef(replyTo);
     useEffect(() => { newMessageRef.current = newMessage; }, [newMessage]);
+    useEffect(() => { editingMsgRef.current = editingMsg; }, [editingMsg]);
     useEffect(() => { replyToRef.current = replyTo; }, [replyTo]);
 
     // ── Edit message ────────────────────────────────────────────────────
@@ -970,10 +972,10 @@ function Room() {
     }, [showToast]);
 
     const sendMessage = useCallback(async (msg) => {
-        // Edit mode: save edit instead of sending new message
-        if (editingMsg && !msg) {
+        // Edit mode: save edit instead of sending new message (use ref to avoid stale closure)
+        if (editingMsgRef.current && !msg) {
             const text = newMessageRef.current.trim();
-            if (text) await editMessage(editingMsg.id, text);
+            if (text) await editMessage(editingMsgRef.current.id, text);
             else { setEditingMsg(null); setNewMessage(""); }
             return;
         }
