@@ -5,7 +5,6 @@ import {
     collection, query, where, onSnapshot,
     updateDoc, doc, addDoc, orderBy, arrayUnion, getDoc, deleteDoc, writeBatch,
 } from "firebase/firestore";
-import "@livekit/components-styles";
 // LiveKit lazy-loaded → separate chunk → fixes TDZ circular dep crash
 const VideoCallRoom = lazy(() => import("../components/VideoCall"));
 
