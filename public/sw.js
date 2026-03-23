@@ -1,31 +1,52 @@
-const CACHE_NAME = 'watch-together-v1';
+// public/sw.js - Updated cache version to force cache clear
+const CACHE_VERSION = 'v3';
+const CACHE_NAME = `watch-together-${CACHE_VERSION}`;
 
+// On install: clear ALL old caches
 self.addEventListener('install', (event) => {
     self.skipWaiting();
+    event.waitUntil(
+        caches.keys().then(keys =>
+            Promise.all(keys.map(key => caches.delete(key)))
+        )
+    );
 });
 
+// On activate: claim all clients immediately
 self.addEventListener('activate', (event) => {
-    event.waitUntil(clients.claim());
+    event.waitUntil(
+        Promise.all([
+            self.clients.claim(),
+            // Delete all old caches
+            caches.keys().then(keys =>
+                Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+            )
+        ])
+    );
 });
 
-// ✅ Fix - localhost requests block பண்ணாம விடு
+// Fetch: network-first, no caching for JS files (prevents stale code)
 self.addEventListener('fetch', (event) => {
-    // localhost-ல cache bypass பண்ணு
-    if (
-        event.request.url.includes('localhost') ||
-        event.request.url.includes('firestore') ||
-        event.request.url.includes('firebase') ||
-        event.request.url.includes('cloudinary') ||
-        event.request.url.includes('youtube')
-    ) {
-        return; // Cache bypass - direct network request
+    const url = new URL(event.request.url);
+
+    // Never cache JS/CSS chunks - always fetch fresh from network
+    if (url.pathname.includes('/assets/') ||
+        url.pathname.endsWith('.js') ||
+        url.pathname.endsWith('.css')) {
+        event.respondWith(fetch(event.request));
+        return;
     }
 
-    event.respondWith(
-        caches.match(event.request).then((response) => {
-            return response || fetch(event.request);
-        }).catch(() => {
-            return fetch(event.request);
-        })
-    );
+    // For navigation requests - network first
+    if (event.request.mode === 'navigate') {
+        event.respondWith(
+            fetch(event.request).catch(() =>
+                caches.match('/index.html')
+            )
+        );
+        return;
+    }
+
+    // Default: network first
+    event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
 });
