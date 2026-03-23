@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { db, auth } from "../firebase";
-import { collection, addDoc, query, where, onSnapshot, orderBy } from "firebase/firestore";
+import { collection, addDoc, query, where, onSnapshot, orderBy, doc, getDoc, setDoc } from "firebase/firestore";
+import ProfileSetup from "./ProfileSetup";
 import { signOut } from "firebase/auth";
 import { uploadToCloudinary } from "../cloudinary";
 
@@ -44,9 +45,26 @@ function Home({ user }) {
     // Bug 2 fix: linkLoading-ஐ இங்க declare பண்றோம் — functions-க்கு முன்னாடி.
     // முன்னாடி line 137-ல handleFileUpload-க்கு பிறகு இருந்தது — Rules of Hooks violation.
     const [linkLoading, setLinkLoading] = useState(false);
+    const [profile, setProfile] = useState(null);      // user's Firestore profile
+    const [profileLoading, setProfileLoading] = useState(true);
+    const [showProfileSetup, setShowProfileSetup] = useState(false);
 
     // ✅ Bug fix #4 — prevent double-click creating 2 rooms
     const creatingRef = useRef(false);
+
+    // Load profile from Firestore
+    useEffect(() => {
+        if (!user?.uid) { setProfileLoading(false); return; }
+        getDoc(doc(db, "profiles", user.uid)).then(snap => {
+            if (snap.exists()) {
+                setProfile(snap.data());
+            } else {
+                // No profile yet → show setup
+                setShowProfileSetup(true);
+            }
+            setProfileLoading(false);
+        }).catch(() => setProfileLoading(false));
+    }, [user?.uid]);
 
     // ✅ Bug fix #2 & #3 — show error if history fails, handle null displayName
     // Bug fix #1 — capture the Firebase-provided index creation URL from the error message
@@ -164,20 +182,68 @@ function Home({ user }) {
 
     const isCouple = roomType === "couple";
 
+    // Show profile setup if needed
+    if (showProfileSetup || (!profileLoading && !profile)) {
+        return (
+            <ProfileSetup
+                user={user}
+                existingProfile={profile}
+                onComplete={(p) => { setProfile(p); setShowProfileSetup(false); }}
+            />
+        );
+    }
+
     return (
         <div style={S.container}>
             {/* Header */}
             <div style={S.header}>
                 <div style={S.logo}>🎬 Watch Together</div>
                 <div style={S.userInfo}>
-                    {user?.photoURL && (
-                        <img src={user.photoURL} alt="avatar"
-                            style={{ width: "32px", height: "32px", borderRadius: "50%", border: "2px solid #ff6b35" }} />
-                    )}
-                    <span style={S.userName}>{user?.displayName || user?.email || "User"}</span>
+                    <div onClick={() => setShowProfileSetup(true)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }} title="Profile edit">
+                        <div style={{ width: "34px", height: "34px", borderRadius: "50%", border: "2px solid #ff6b35", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "#2a2a2a" }}>
+                            {profile?.photoUrl
+                                ? <img src={profile.photoUrl} alt="profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                : <span style={{ fontSize: "18px" }}>{profile?.avatar || "🧑"}</span>
+                            }
+                        </div>
+                        <span style={S.userName}>{profile?.name || user?.displayName || user?.email || "User"}</span>
+                    </div>
                     <button onClick={handleLogout} style={S.logoutBtn}>Logout</button>
                 </div>
             </div>
+
+            {/* Profile Card */}
+            {profile && (
+                <div style={{ margin: "0 16px 16px", backgroundColor: "#1a1a1a", borderRadius: "16px", border: "1px solid #333", padding: "16px", display: "flex", alignItems: "center", gap: "14px" }}>
+                    <div style={{ width: "60px", height: "60px", borderRadius: "50%", border: "3px solid #ff6b35", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "#2a2a2a", flexShrink: 0 }}>
+                        {profile.photoUrl
+                            ? <img src={profile.photoUrl} alt="profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            : <span style={{ fontSize: "28px" }}>{profile.avatar || "🧑"}</span>
+                        }
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ color: "white", fontWeight: "bold", fontSize: "16px", margin: "0 0 2px 0" }}>{profile.name}</p>
+                        <p style={{ color: "#aaa", fontSize: "12px", margin: "0 0 4px 0" }}>{profile.email}</p>
+                        {profile.dob && (
+                            <p style={{ color: "#ff6b35", fontSize: "11px", margin: "0 0 4px 0" }}>
+                                🎂 {new Date(profile.dob).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+                                {" · "}{Math.floor((Date.now() - new Date(profile.dob)) / (365.25 * 24 * 60 * 60 * 1000))} வயசு
+                            </p>
+                        )}
+                        {profile.genres?.length > 0 && (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+                                {profile.genres.map(g => (
+                                    <span key={g} style={{ backgroundColor: "rgba(255,107,53,0.15)", color: "#ff6b35", fontSize: "10px", padding: "2px 7px", borderRadius: "10px", border: "1px solid rgba(255,107,53,0.3)" }}>{g}</span>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    <button onClick={() => setShowProfileSetup(true)}
+                        style={{ backgroundColor: "#2a2a2a", border: "1px solid #444", color: "#aaa", borderRadius: "8px", padding: "6px 10px", cursor: "pointer", fontSize: "12px", flexShrink: 0 }}>
+                        ✏️ Edit
+                    </button>
+                </div>
+            )}
 
             {/* Main Tabs */}
             <div style={S.tabs}>
