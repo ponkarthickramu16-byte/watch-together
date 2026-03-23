@@ -5,6 +5,7 @@ import {
     collection, query, where, onSnapshot,
     updateDoc, doc, addDoc, orderBy, arrayUnion, getDoc, deleteDoc, writeBatch,
 } from "firebase/firestore";
+import "@livekit/components-styles";
 // LiveKit lazy-loaded → separate chunk → fixes TDZ circular dep crash
 const VideoCallRoom = lazy(() => import("../components/VideoCall"));
 
@@ -941,6 +942,33 @@ function Room() {
     useEffect(() => { newMessageRef.current = newMessage; }, [newMessage]);
     useEffect(() => { replyToRef.current = replyTo; }, [replyTo]);
 
+    // ── Edit message ────────────────────────────────────────────────────
+    const editMessage = useCallback(async (msgId, newText) => {
+        if (!newText.trim() || newText.length > 2000) return;
+        try {
+            const encrypted = await encryptMessage(newText.trim(), roomId);
+            await updateDoc(doc(db, "chats", msgId), {
+                message: encrypted,
+                editedAt: new Date(),
+            });
+            // Update decrypt cache so UI reflects immediately
+            if (_decryptCache.has(msgId)) {
+                const old = _decryptCache.get(msgId);
+                _decryptCache.set(msgId, { ...old, message: newText.trim() });
+            }
+            setEditingMsg(null);
+            setNewMessage("");
+        } catch (err) { showToast("Edit fail: " + err.message, "❌", "#e74c3c"); }
+    }, [roomId, showToast]);
+
+    // ── Delete message ────────────────────────────────────────────────
+    const deleteMessage = useCallback(async (msgId) => {
+        try {
+            await deleteDoc(doc(db, "chats", msgId));
+            _decryptCache.delete(msgId);
+        } catch (err) { showToast("Delete fail: " + err.message, "❌", "#e74c3c"); }
+    }, [showToast]);
+
     const sendMessage = useCallback(async (msg) => {
         // Edit mode: save edit instead of sending new message
         if (editingMsg && !msg) {
@@ -983,34 +1011,9 @@ function Room() {
         }).catch(() => { }); // silent fail if not deployed
         // newMessage and replyTo are intentionally read via refs — not listed as deps.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [roomDocId, roomId, username, showToast, editMessage]);
+    }, [roomDocId, roomId, username, showToast]);
 
-    // ── Edit message ────────────────────────────────────────────────────
-    const editMessage = useCallback(async (msgId, newText) => {
-        if (!newText.trim() || newText.length > 2000) return;
-        try {
-            const encrypted = await encryptMessage(newText.trim(), roomId);
-            await updateDoc(doc(db, "chats", msgId), {
-                message: encrypted,
-                editedAt: new Date(),
-            });
-            // Update decrypt cache so UI reflects immediately
-            if (_decryptCache.has(msgId)) {
-                const old = _decryptCache.get(msgId);
-                _decryptCache.set(msgId, { ...old, message: newText.trim() });
-            }
-            setEditingMsg(null);
-            setNewMessage("");
-        } catch (err) { showToast("Edit fail: " + err.message, "❌", "#e74c3c"); }
-    }, [roomId, showToast]);
 
-    // ── Delete message ────────────────────────────────────────────────
-    const deleteMessage = useCallback(async (msgId) => {
-        try {
-            await deleteDoc(doc(db, "chats", msgId));
-            _decryptCache.delete(msgId);
-        } catch (err) { showToast("Delete fail: " + err.message, "❌", "#e74c3c"); }
-    }, [showToast]);
 
     const handleVoiceSend = useCallback(async (audioBlob, duration) => {
         setShowVoiceRecorder(false);
