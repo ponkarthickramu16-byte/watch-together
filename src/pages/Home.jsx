@@ -102,34 +102,38 @@ function Home({ user }) {
         return unsub;
     }, [user?.displayName, user?.email]);
 
-    // ✅ Bug fix #1 & #4 — await Firestore write, prevent double create
-    const createRoom = async (url, type) => {
-        if (creatingRef.current) return; // prevent double click
-        creatingRef.current = true;
+    // Home.jsx - createRoom function-ல இத செக் பண்ணுங்க
+
+    const createRoom = async (movieId = null, movieTitle = "") => {
+        if (!profile) return;
+
+        // db variable இங்க define ஆகிருக்கணும் (import { db } from "../firebase")
+        if (!db) {
+            console.error("Firestore DB instance is missing!");
+            return;
+        }
+
         try {
             const roomId = generateRoomId();
-            await addDoc(collection(db, "rooms"), {
+            const newRoom = {
                 roomId,
-                movieUrl: url,
-                movieType: type,
-                roomType: roomType,
-                maxMembers: roomType === "couple" ? 2 : 10,
-                isPlaying: false,
-                currentTime: 0,
+                hostId: auth.currentUser.uid,
+                hostName: profile.name,
+                hostAvatar: profile.avatar || "🧑",
+                hostPic: profile.profilePic || "",
                 createdAt: new Date(),
-                createdBy: user?.displayName || user?.email || "Anonymous",
-                callStatus: "idle",
-                callBy: "",
-                participants: [],
-            });
-            // Bug 4 fix: navigate பண்ணிட்டு creatingRef reset பண்றோம்.
-            // இல்லன்னா back button press பண்ணி Home-க்கு வந்தா
-            // "Go" button permanent-ஆ work பண்ணாது. ✅
-            creatingRef.current = false;
+                status: "active",
+                movieId: movieId || currentUrl,
+                movieTitle: movieTitle || "YouTube Video",
+                participants: [auth.currentUser.uid],
+            };
+
+            // இங்க db null-ஆ இருந்தா தான் நீங்க சொன்ன error வரும்
+            await setDoc(doc(db, "rooms", roomId), newRoom);
             navigate(`/room/${roomId}`);
         } catch (err) {
-            setError("❌ Room create ஆகல: " + err.message);
-            creatingRef.current = false;
+            console.error("Room create error:", err);
+            alert("Room create பண்ண முடியல!");
         }
     };
 

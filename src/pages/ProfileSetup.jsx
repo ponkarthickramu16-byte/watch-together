@@ -223,25 +223,49 @@ const handlePhotoUpload = async (e) => {
     finally { setUploading(false); }
 };
 
+// ProfileSetup.jsx - handleSave function-ஐ இப்படி மாத்துங்க
+
 const handleSave = async () => {
-    if (!name.trim()) { setError("பேரு கண்டிப்பா போடணும்"); return; }
+    // uid இல்லனா உடனே ரிட்டன் பண்ணிடணும், இல்லனா Firestore crash ஆகும்
+    if (!uid) {
+        setError("User ID not found. Please re-login.");
+        return;
+    }
+    if (!name.trim()) {
+        setError("Please enter your name!");
+        return;
+    }
+
     setSaving(true);
     setError("");
+
     try {
-        const profile = {
+        let finalImageUrl = profilePic;
+        if (imageFile) {
+            finalImageUrl = await uploadToCloudinary(imageFile);
+        }
+
+        const profileData = {
             uid,
-            email,
             name: name.trim(),
-            dob: dob || null,
-            genres,
+            email,
+            profilePic: finalImageUrl,
             avatar,
-            photoUrl: photoUrl || null,
+            genres,
             updatedAt: new Date(),
         };
-        await setDoc(doc(db, "profiles", uid), profile);
-        onComplete(profile);
-    } catch (err) { setError("Save fail: " + err.message); }
-    finally { setSaving(false); }
+
+        // Correct way to reference the document
+        const userDocRef = doc(db, "users", uid);
+        await setDoc(userDocRef, profileData, { merge: true });
+
+        onComplete(profileData);
+    } catch (err) {
+        console.error("Error saving profile:", err);
+        setError("Profile save பண்ண முடியல. கொஞ்சம் அப்புறம் try பண்ணுங்க.");
+    } finally {
+        setSaving(false);
+    }
 };
 
 const profilePic = tab === "upload" && photoUrl ? photoUrl : null;
