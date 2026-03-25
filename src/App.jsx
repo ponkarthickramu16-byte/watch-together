@@ -45,12 +45,12 @@ function App() {
         {/* Home - Login ஆனா மட்டும் */}
         <Route
           path="/"
-          element={user ? <Home /> : <Navigate to="/login" />}
+          element={user ? <Home user={user} /> : <Navigate to="/login" />}
         />
         {/* Room - Login ஆனா மட்டும் */}
         <Route
           path="/room/:roomId"
-          element={user ? <Room /> : <Navigate to="/login" />}
+          element={user ? <Room user={user} /> : <Navigate to="/login" />}
         />
       </Routes>
     </BrowserRouter>
