@@ -21,9 +21,14 @@ const EMOJI_CATEGORIES = [
 ];
 
 const getYouTubeId = (url) => {
-    if (!url || typeof url !== "string") return null;
+    if (!url || typeof url !== "string") {
+        console.log("[Watch Together] Invalid URL:", url);
+        return null;
+    }
     const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
-    return match ? match[1] : null;
+    const id = match ? match[1] : null;
+    console.log("[Watch Together] YouTube ID extraction:", { url, id });
+    return id;
 };
 
 // ─── Bug 6 fix: Environment variable guard ────────────────────────────────────
@@ -554,6 +559,7 @@ function Room() {
     }, [isPlaying, roomData?.movieUrl, sendYtCmd]);
 
     // FIX 4: Remove isSyncing from deps - use only roomId
+    const roomLoadedRef = useRef(false);
     useEffect(() => {
         const q = query(collection(db, "rooms"), where("roomId", "==", roomId));
         return onSnapshot(q, (snapshot) => {
@@ -562,6 +568,30 @@ function Room() {
                 setRoomDocId(docData.id);
                 const data = docData.data();
                 setRoomData(data);
+
+                // Debug logging for movieUrl issues
+                console.log("[Watch Together Debug] Room data:", {
+                    roomId,
+                    hasMovieUrl: !!data.movieUrl,
+                    movieUrl: data.movieUrl,
+                    isYouTube: !!getYouTubeId(data.movieUrl),
+                    youtubeId: getYouTubeId(data.movieUrl)
+                });
+
+                // Show success toast on first load if movie URL exists
+                if (!roomLoadedRef.current && data.movieUrl) {
+                    roomLoadedRef.current = true;
+                    const youtubeId = getYouTubeId(data.movieUrl);
+                    if (youtubeId) {
+                        showToast("YouTube video ready! 🎬", "✅", "#27ae60");
+                    } else {
+                        showToast("Video file ready! 🎬", "✅", "#27ae60");
+                    }
+                } else if (!roomLoadedRef.current && !data.movieUrl) {
+                    roomLoadedRef.current = true;
+                    showToast("Room loaded! Movie URL add பண்ணு 🏠", "⚠️", "#f39c12");
+                }
+
                 if (!isSyncingRef.current) setIsPlaying(data.isPlaying);
                 if (videoRef.current && data.currentTime !== undefined && !isSyncingSeekRef.current) {
                     const diff = Math.abs(videoRef.current.currentTime - data.currentTime);
@@ -571,9 +601,15 @@ function Room() {
                     if (data.isPlaying && videoRef.current.paused) videoRef.current.play().catch(() => { });
                     else if (!data.isPlaying && !videoRef.current.paused) videoRef.current.pause();
                 }
+            } else {
+                console.error("[Watch Together] Room not found:", roomId);
+                showToast("Room இல்ல! Room ID சரியா check பண்ணு.", "❌", "#e74c3c");
             }
+        }, (error) => {
+            console.error("[Watch Together] Firebase error:", error);
+            showToast("Firebase connection error! Internet check பண்ணு.", "❌", "#e74c3c");
         });
-    }, [roomId]); // FIX 4: removed isSyncing dep
+    }, [roomId, showToast]); // FIX 4: removed isSyncing dep, added showToast
 
     // FIX 2: Merged call+typing+presence into ONE onSnapshot listener
     useEffect(() => {
@@ -1151,6 +1187,7 @@ function Room() {
                                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                                 allowFullScreen
                                 onLoad={() => {
+                                    console.log("[Watch Together] YouTube iframe loaded successfully");
                                     setTimeout(() => {
                                         if (!ytReadyRef.current) {
                                             ytReadyRef.current = true;
@@ -1160,6 +1197,10 @@ function Room() {
                                         }
                                         if (isPlayingRef.current) setNeedsUserGesture(true);
                                     }, 1500);
+                                }}
+                                onError={(e) => {
+                                    console.error("[Watch Together] YouTube iframe error:", e);
+                                    showToast("YouTube video load ஆகல! URL சரியா check பண்ணு.", "❌", "#e74c3c");
                                 }} />
 
                             {needsUserGesture && (
@@ -1200,9 +1241,14 @@ function Room() {
                             onPause={() => { if (joinedRef.current) updatePlayState(false, videoRef.current?.currentTime); }}
                             onSeeked={handleSeek} />
                     ) : (
-                        <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "12px" }}>
-                            <span style={{ fontSize: "48px" }}>🎬</span>
-                            <p style={{ color: "#666", fontSize: "15px", margin: 0 }}>Movie URL இல்ல — Home-ல URL add பண்ணு</p>
+                        <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "16px", padding: "20px" }}>
+                            <span style={{ fontSize: "64px" }}>🎬</span>
+                            <p style={{ color: T.text, fontSize: "18px", fontWeight: "bold", margin: 0, textAlign: "center" }}>Movie URL இல்ல!</p>
+                            <p style={{ color: T.text2, fontSize: "14px", margin: 0, textAlign: "center" }}>Home page-ல போய் YouTube URL add பண்ணு</p>
+                            <button onClick={() => navigate("/")}
+                                style={{ padding: "12px 24px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "10px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", marginTop: "8px" }}>
+                                🏠 Home-க்கு போ
+                            </button>
                         </div>
                     )}
                     {floatingReactions.map((r) => (
