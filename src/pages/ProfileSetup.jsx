@@ -4,7 +4,7 @@
 import { useState, useRef } from "react";
 import { db } from "../firebase";
 import { doc, setDoc } from "firebase/firestore";
-import { uploadToCloudinary } from "../cloudinary";
+import { uploadImageToCloudinary } from "../cloudinary";
 
 const GENRES = ["Romance 💕", "Action 🔥", "Comedy 😂", "Horror 👻", "Thriller 😱", "Sci-Fi 🚀", "Drama 😢", "Animation 🎨", "Documentary 📽️", "Fantasy ✨"];
 
@@ -46,7 +46,7 @@ export default function ProfileSetup({ user, onComplete, existingProfile = null 
         setUploading(true);
         setError("");
         try {
-            const url = await uploadToCloudinary(file);
+            const url = await uploadImageToCloudinary(file);
             setPhotoUrl(url);
             setTab("upload");
         } catch { setError("Upload fail ஆச்சு, retry பண்ணு"); }
