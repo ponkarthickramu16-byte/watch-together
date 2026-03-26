@@ -5,6 +5,7 @@ import {
     collection, query, where, onSnapshot,
     updateDoc, doc, addDoc, orderBy, arrayUnion, getDoc, deleteDoc, writeBatch,
 } from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
 import "@livekit/components-styles";
 // LiveKit lazy-loaded → separate chunk → fixes TDZ circular dep crash
 const VideoCallRoom = lazy(() => import("../components/VideoCall"));
@@ -373,6 +374,19 @@ function Room() {
     const editingMsgRef = useRef(null); // ref to avoid stale closure in sendMessage
     const [unreadCount, setUnreadCount] = useState(0);
     const [onlineUsers, setOnlineUsers] = useState([]);
+
+    // Firebase auth is async on first load; `auth.currentUser` can be null briefly.
+    // We wait for auth state to be resolved before writing watchHistory so
+    // `watchedByUid` is reliably present for Home.jsx queries.
+    const [authUser, setAuthUser] = useState(null);
+    const [authChecked, setAuthChecked] = useState(false);
+    useEffect(() => {
+        const unsub = onAuthStateChanged(auth, (u) => {
+            setAuthUser(u || null);
+            setAuthChecked(true);
+        });
+        return () => unsub();
+    }, []);
 
     const [needsUserGesture, setNeedsUserGesture] = useState(false); // Bug 3: autoplay block detection
     const prevParticipantsRef = useRef([]);
@@ -895,13 +909,13 @@ function Room() {
         };
     }, [roomDocId, username]);
 
-    const saveWatchHistory = useCallback(async (docId, data, user) => {
+    const saveWatchHistory = useCallback(async (docId, data, user, authU) => {
         const movieUrl = normalizeMovieUrl(data);
         if (!docId || !movieUrl || !user) return;
         const youtubeId = getYouTubeId(movieUrl);
         try {
-            const uid = auth.currentUser?.uid || null;
-            const authName = auth.currentUser?.displayName || auth.currentUser?.email || null;
+            const uid = authU?.uid || null;
+            const authName = authU?.displayName || authU?.email || null;
             await addDoc(collection(db, "watchHistory"), {
                 roomId, movieUrl,
                 movieType: data?.movieType || (youtubeId ? "youtube" : "upload"),
@@ -915,11 +929,14 @@ function Room() {
     }, [roomId]);
 
     useEffect(() => {
+        // Don't log until auth state is resolved; otherwise watchedByUid becomes null and
+        // Home.jsx UID-based query won't show anything.
+        if (!authChecked) return;
         if (isPlaying && roomDocId && roomData?.movieUrl && username && !historyLoggedRef.current) {
             historyLoggedRef.current = true;
-            saveWatchHistory(roomDocId, roomData, username);
+            saveWatchHistory(roomDocId, roomData, username, authUser);
         }
-    }, [isPlaying, roomDocId, roomData, username, saveWatchHistory]);
+    }, [isPlaying, roomDocId, roomData, username, saveWatchHistory, authChecked, authUser]);
 
     // Bug 5 fix: wrap in useCallback with explicit deps so these functions always
     // close over the current roomDocId/username, not a stale snapshot from mount-time.
