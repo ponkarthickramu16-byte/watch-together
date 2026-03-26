@@ -77,38 +77,96 @@ function Home({ user }) {
     // ✅ Bug fix #2 & #3 — show error if history fails, handle null displayName
     // Bug fix #1 — capture the Firebase-provided index creation URL from the error message
     useEffect(() => {
-        const userName = user?.displayName || user?.email || null;
-        if (!userName) {
+        const uid = user?.uid || null;
+        const fallbackName = profile?.name || user?.displayName || user?.email || null;
+
+        if (!uid && !fallbackName) {
             setHistoryLoading(false);
             return;
         }
+
         setHistoryError("");
-        const q = query(
+        setHistoryLoading(true);
+
+        let fallbackUnsub = null;
+
+        const handleErr = (err) => {
+            console.error("History load error:", err);
+            if (err.code === "failed-precondition") {
+                const urlMatch = err.message?.match(/https:\/\/console\.firebase\.google\.com[^\s]+/);
+                setIndexCreateUrl(urlMatch ? urlMatch[0] : "https://console.firebase.google.com/project/_/firestore/indexes");
+                setHistoryError("index");
+            } else {
+                setHistoryError("general");
+            }
+            setHistoryLoading(false);
+        };
+
+        // Primary: UID-based history (reliable)
+        if (uid) {
+            const qUid = query(
+                collection(db, "watchHistory"),
+                where("watchedByUid", "==", uid),
+                orderBy("watchedAt", "desc")
+            );
+
+            const unsub = onSnapshot(
+                qUid,
+                (snap) => {
+                    if (!snap.empty) {
+                        // Got data → stop any fallback listener
+                        fallbackUnsub?.();
+                        fallbackUnsub = null;
+                        setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                        setHistoryLoading(false);
+                        return;
+                    }
+
+                    // No UID-based docs (old data). Fallback to name-based query.
+                    if (fallbackName && !fallbackUnsub) {
+                        const qName = query(
+                            collection(db, "watchHistory"),
+                            where("watchedBy", "==", fallbackName),
+                            orderBy("watchedAt", "desc")
+                        );
+                        fallbackUnsub = onSnapshot(
+                            qName,
+                            (snap2) => {
+                                setHistory(snap2.docs.map(d => ({ id: d.id, ...d.data() })));
+                                setHistoryLoading(false);
+                            },
+                            handleErr
+                        );
+                    } else if (!fallbackName) {
+                        setHistory([]);
+                        setHistoryLoading(false);
+                    }
+                },
+                handleErr
+            );
+
+            return () => {
+                fallbackUnsub?.();
+                unsub();
+            };
+        }
+
+        // No uid available → name-based only
+        const qNameOnly = query(
             collection(db, "watchHistory"),
-            where("watchedBy", "==", userName),
+            where("watchedBy", "==", fallbackName),
             orderBy("watchedAt", "desc")
         );
-        const unsub = onSnapshot(q,
+        const unsubNameOnly = onSnapshot(
+            qNameOnly,
             (snap) => {
                 setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
                 setHistoryLoading(false);
             },
-            (err) => {
-                console.error("History load error:", err);
-                if (err.code === "failed-precondition") {
-                    // Firebase embeds the direct index-creation URL inside the error message.
-                    // Extract it so the user can click straight through to the right page.
-                    const urlMatch = err.message?.match(/https:\/\/console\.firebase\.google\.com[^\s]+/);
-                    setIndexCreateUrl(urlMatch ? urlMatch[0] : "https://console.firebase.google.com/project/_/firestore/indexes");
-                    setHistoryError("index");
-                } else {
-                    setHistoryError("general");
-                }
-                setHistoryLoading(false);
-            }
+            handleErr
         );
-        return unsub;
-    }, [user?.displayName, user?.email]);
+        return () => unsubNameOnly();
+    }, [user?.uid, user?.displayName, user?.email, profile?.name]);
 
     // Home.jsx - createRoom function-ல இத செக் பண்ணுங்க
 

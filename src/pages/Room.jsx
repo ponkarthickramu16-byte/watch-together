@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { db } from "../firebase";
+import { db, auth } from "../firebase";
 import {
     collection, query, where, onSnapshot,
     updateDoc, doc, addDoc, orderBy, arrayUnion, getDoc, deleteDoc, writeBatch,
@@ -900,11 +900,16 @@ function Room() {
         if (!docId || !movieUrl || !user) return;
         const youtubeId = getYouTubeId(movieUrl);
         try {
+            const uid = auth.currentUser?.uid || null;
+            const authName = auth.currentUser?.displayName || auth.currentUser?.email || null;
             await addDoc(collection(db, "watchHistory"), {
                 roomId, movieUrl,
                 movieType: data?.movieType || (youtubeId ? "youtube" : "upload"),
                 movieTitle: youtubeId ? `YouTube: ${youtubeId}` : movieUrl.split("/").pop() || "Movie",
-                watchedBy: user, watchedAt: new Date(),
+                watchedBy: authName || user,
+                watchedByName: user,
+                watchedByUid: uid,
+                watchedAt: new Date(),
             });
         } catch { }
     }, [roomId]);
