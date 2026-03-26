@@ -9,7 +9,14 @@ import { uploadToCloudinary } from "../cloudinary";
 const generateRoomId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
 const getYouTubeId = (url) => {
-    const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
+    if (!url) return null;
+    const trimmed = typeof url === "string" ? url.trim() : "";
+    if (!trimmed) return null;
+
+    // Support when DB/API stores only the YouTube id (11 chars).
+    if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
+
+    const match = trimmed.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
     return match ? match[1] : null;
 };
 
@@ -23,9 +30,10 @@ const formatDateTime = (date) => {
 
 const getMovieTitle = (entry) => {
     if (entry.movieTitle) return entry.movieTitle;
-    const ytId = getYouTubeId(entry.movieUrl || "");
+    const resolvedUrl = entry.movieUrl || entry.videoUrl || entry.movieId || "";
+    const ytId = getYouTubeId(resolvedUrl);
     if (ytId) return "YouTube Video";
-    const filename = entry.movieUrl?.split("/").pop()?.split("?")[0] || "Movie";
+    const filename = resolvedUrl?.split("/").pop()?.split("?")[0] || "Movie";
     return decodeURIComponent(filename).substring(0, 40);
 };
 

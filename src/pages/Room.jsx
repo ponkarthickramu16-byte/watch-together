@@ -22,7 +22,13 @@ const EMOJI_CATEGORIES = [
 
 const getYouTubeId = (url) => {
     if (!url) return null;
-    const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
+    const trimmed = typeof url === "string" ? url.trim() : "";
+    if (!trimmed) return null;
+
+    // Support when DB stores only the YouTube id (11 chars).
+    if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
+
+    const match = trimmed.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
     return match ? match[1] : null;
 };
 
@@ -32,8 +38,11 @@ const getYouTubeSrc = (id) => {
 
 const normalizeMovieUrl = (data) => {
     if (!data) return "";
-    if (typeof data.movieUrl === "string" && data.movieUrl.trim()) return data.movieUrl.trim();
-    if (typeof data.videoUrl === "string" && data.videoUrl.trim()) return data.videoUrl.trim();
+    // Backward-compat: some old rooms stored the URL in `movieId` instead of `movieUrl`.
+    const candidates = [data.movieUrl, data.videoUrl, data.movieId];
+    for (const v of candidates) {
+        if (typeof v === "string" && v.trim()) return v.trim();
+    }
     return "";
 };
 
