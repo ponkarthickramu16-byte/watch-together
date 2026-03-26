@@ -105,17 +105,19 @@ function Home({ user }) {
     // Home.jsx - createRoom function-ல இத செக் பண்ணுங்க
 
     const createRoom = async (inputUrl = "", inputType = "") => {
+        console.log("[Watch Together Home] createRoom called with:", { inputUrl, inputType });
+
         if (!profile || !auth.currentUser) {
-            console.error("[Watch Together] Cannot create room: missing profile or auth");
+            console.error("[Watch Together Home] Missing profile or auth:", { profile: !!profile, auth: !!auth.currentUser });
             setError("❌ Profile setup பண்ணு or login பண்ணு");
             return;
         }
 
         const trimmedUrl = typeof inputUrl === "string" ? inputUrl.trim() : "";
+        console.log("[Watch Together Home] Trimmed URL:", trimmedUrl);
 
-        // Critical validation: movieUrl MUST exist
         if (!trimmedUrl || trimmedUrl.length === 0) {
-            console.error("[Watch Together] Cannot create room: empty movieUrl");
+            console.error("[Watch Together Home] Empty URL detected");
             setError("❌ Valid YouTube link அல்லது video URL enter பண்ணு");
             return;
         }
@@ -123,22 +125,23 @@ function Home({ user }) {
         const isYouTube = !!getYouTubeId(trimmedUrl);
         const movieType = inputType || (isYouTube ? "youtube" : "upload");
 
-        console.log("[Watch Together] Creating room with:", {
-            trimmedUrl,
+        console.log("[Watch Together Home] URL analysis:", {
             isYouTube,
             movieType,
-            urlLength: trimmedUrl.length
+            urlLength: trimmedUrl.length,
+            youtubeId: getYouTubeId(trimmedUrl)
         });
 
         // Prevent double-creation
         if (creatingRef.current) {
-            console.warn("[Watch Together] Room creation already in progress");
+            console.warn("[Watch Together Home] Room creation already in progress");
             return;
         }
         creatingRef.current = true;
 
         try {
             const roomId = generateRoomId();
+            console.log("[Watch Together Home] Generated room ID:", roomId);
 
             const newRoom = {
                 roomId,
@@ -149,10 +152,10 @@ function Home({ user }) {
                 createdAt: new Date(),
                 status: "active",
                 roomType,
-                movieUrl: trimmedUrl,  // CRITICAL: This must be set!
+                movieUrl: trimmedUrl,
                 movieType,
                 movieTitle: isYouTube ? "YouTube Video" : "Uploaded Video",
-                isPlaying: false,  // Changed: Start paused so users can sync before playing
+                isPlaying: false,
                 currentTime: 0,
                 participants: [auth.currentUser.uid],
                 presence: { [auth.currentUser.uid]: Date.now() },
@@ -160,22 +163,21 @@ function Home({ user }) {
                 callStatus: "idle",
             };
 
-            console.log("[Watch Together] Saving room to Firestore:", {
-                roomId,
+            console.log("[Watch Together Home] Creating room with data:", {
+                roomId: newRoom.roomId,
                 movieUrl: newRoom.movieUrl,
-                docPath: `rooms/${roomId}`
+                movieType: newRoom.movieType,
+                hasMovieUrl: !!newRoom.movieUrl
             });
 
-            // Save to Firestore
             await setDoc(doc(db, "rooms", roomId), newRoom);
+            console.log("[Watch Together Home] Room created successfully in Firestore");
 
-            console.log("[Watch Together] Room created successfully, navigating...");
-
-            // Navigate to room
+            console.log("[Watch Together Home] Navigating to room:", `/room/${roomId}`);
             navigate(`/room/${roomId}`);
 
         } catch (err) {
-            console.error("[Watch Together] Room create error:", err);
+            console.error("[Watch Together Home] Room create error:", err);
             setError("❌ Room create பண்ண முடியல: " + err.message);
             alert("Room create பண்ண முடியல! Console பாத்து error check பண்ணு.");
         } finally {
@@ -204,42 +206,18 @@ function Home({ user }) {
     const handleDrop = (e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFileUpload(f); };
 
     const handleYouTubeOrLink = async () => {
-        if (linkLoading || creatingRef.current) {
-            console.warn("[Watch Together] Request already in progress");
-            return;
-        }
-
+        if (linkLoading || creatingRef.current) return;
         const url = movieUrl.trim();
-        if (!url || url.length === 0) {
-            setError("❌ Link enter பண்ணு");
-            return;
-        }
-
-        console.log("[Watch Together] Processing URL:", url);
-
-        setError("");
-        setLinkLoading(true);
-        creatingRef.current = true;
-
+        if (!url) { setError("❌ Link enter பண்ணு"); return; }
+        setError(""); setLinkLoading(true);
         try {
             const ytId = getYouTubeId(url);
-            if (ytId) {
-                console.log("[Watch Together] YouTube video detected:", ytId);
-                await createRoom(url, "youtube");
-            } else if (url.startsWith("http")) {
-                console.log("[Watch Together] Direct video URL detected");
-                await createRoom(url, "upload");
-            } else {
-                console.error("[Watch Together] Invalid URL format:", url);
-                setError("❌ Valid YouTube link அல்லது video URL enter பண்ணு");
-                creatingRef.current = false;  // Reset on error
-            }
-        } catch (err) {
-            console.error("[Watch Together] handleYouTubeOrLink error:", err);
-            setError("❌ Error: " + err.message);
+            if (ytId) await createRoom(url, "youtube");
+            else if (url.startsWith("http")) await createRoom(url, "upload");
+            else setError("❌ Valid YouTube link அல்லது video URL enter பண்ணு");
         } finally {
             setLinkLoading(false);
-            // Note: creatingRef.current = false is handled in createRoom's finally block
+            creatingRef.current = false;
         }
     };
 
