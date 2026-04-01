@@ -1,3 +1,5 @@
+import SubtitleManager from "../components/SubtitleManager";
+import PlaybackControls from "../components/PlaybackControls";
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { db, auth } from "../firebase";
@@ -375,6 +377,10 @@ function Room() {
     const [unreadCount, setUnreadCount] = useState(0);
     const [onlineUsers, setOnlineUsers] = useState([]);
 
+    const [playbackRate, setPlaybackRate] = useState(1);
+    const [videoQuality, setVideoQuality] = useState('auto');
+    const [currentVideoTime, setCurrentVideoTime] = useState(0);
+
     // Firebase auth is async on first load; `auth.currentUser` can be null briefly.
     // We wait for auth state to be resolved before writing watchHistory so
     // `watchedByUid` is reliably present for Home.jsx queries.
@@ -457,6 +463,27 @@ function Room() {
         _keyCache.clear();                // derived keys are room-specific — clear on change
         prevMovieUrlRef.current = null;
     }, [roomId]);
+    
+    useEffect(() => {
+        let interval;
+        if (isPlaying) {
+            interval = setInterval(() => {
+                if (videoRef.current) {
+                    setCurrentVideoTime(videoRef.current.currentTime);
+                } else if (iframeRef.current && ytReadyRef.current) {
+                    try {
+                        iframeRef.current.contentWindow?.postMessage(
+                            JSON.stringify({ event: 'listening', id: 'getCurrentTime' }),
+                            '*'
+                        );
+                    } catch (err) {
+                        console.error('Get YouTube time error:', err);
+                    }
+                }
+            }, 100);
+        }
+        return () => clearInterval(interval);
+    }, [isPlaying]);
 
     useEffect(() => {
         if (!nameSet) return;
@@ -556,11 +583,14 @@ function Room() {
                     pendingYtCmdRef.current = [];
                     queue.forEach(func => sendYtCmd(func));
                 }
+                if (d?.event === "infoDelivery" && d?.info?.currentTime !== undefined) {
+                    setCurrentVideoTime(d.info.currentTime);
+                }
             } catch { }
         };
         window.addEventListener("message", onMsg);
         return () => window.removeEventListener("message", onMsg);
-    }, [sendYtCmd]);
+    }, [sendYtCmd, setCurrentVideoTime]);
 
     useEffect(() => {
         if (!roomData?.movieUrl || !getYouTubeId(roomData.movieUrl)) return;
@@ -580,6 +610,62 @@ function Room() {
             return () => clearTimeout(t);
         }
     }, [isPlaying, roomData?.movieUrl, sendYtCmd]);
+
+    useEffect(() => {
+        if (!roomData) return;
+        const shouldUseYouTube = roomData.movieType === "youtube" || !!getYouTubeId(roomData.movieUrl || "");
+        
+        // Sync playback rate
+        if (roomData.playbackRate !== undefined && roomData.playbackRate !== playbackRate) {
+            setPlaybackRate(roomData.playbackRate);
+            
+            if (shouldUseYouTube && iframeRef?.current && ytReadyRef.current) {
+                try {
+                    iframeRef.current.contentWindow?.postMessage(
+                        JSON.stringify({
+                            event: 'command',
+                            func: 'setPlaybackRate',
+                            args: [roomData.playbackRate]
+                        }),
+                        '*'
+                    );
+                } catch (err) {
+                    console.error('Sync playback rate error:', err);
+                }
+            } else if (videoRef?.current) {
+                videoRef.current.playbackRate = roomData.playbackRate;
+            }
+        }
+        
+        // Sync quality
+        if (roomData.quality !== undefined && roomData.quality !== videoQuality) {
+            setVideoQuality(roomData.quality);
+            
+            if (shouldUseYouTube && iframeRef?.current && ytReadyRef.current) {
+                const qualityMap = {
+                    '2160p': 'highres',
+                    '1440p': 'hd1440',
+                    '1080p': 'hd1080',
+                    '720p': 'hd720',
+                    '480p': 'large',
+                    'auto': 'default'
+                };
+                
+                try {
+                    iframeRef.current.contentWindow?.postMessage(
+                        JSON.stringify({
+                            event: 'command',
+                            func: 'setPlaybackQuality',
+                            args: [qualityMap[roomData.quality] || 'default']
+                        }),
+                        '*'
+                    );
+                } catch (err) {
+                    console.error('Sync quality error:', err);
+                }
+            }
+        }
+    }, [roomData?.movieType, roomData?.movieUrl, roomData?.playbackRate, roomData?.quality, playbackRate, videoQuality]);
 
     // FIX 4: Direct document lookup for better reliability  
     const roomLoadedRef = useRef(false);
@@ -1303,6 +1389,7 @@ function Room() {
                             style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
                             onPlay={() => { if (joinedRef.current) updatePlayState(true, videoRef.current?.currentTime); }}
                             onPause={() => { if (joinedRef.current) updatePlayState(false, videoRef.current?.currentTime); }}
+                            onTimeUpdate={(e) => setCurrentVideoTime(e.target.currentTime)}
                             onSeeked={handleSeek}
                         />
                     ) : (
@@ -1316,6 +1403,15 @@ function Room() {
                             </button>
                         </div>
                     )}
+                    <div style={{ position: "absolute", bottom: "16px", right: "16px", zIndex: 12 }}>
+                        <SubtitleManager
+                            roomId={roomId}
+                            roomDocId={roomDocId}
+                            currentTime={currentVideoTime}
+                            isYouTube={isYouTubeVideo}
+                            T={T}
+                        />
+                    </div>
                     {floatingReactions.map((r) => (
                         <div key={r.id} style={{ position: "absolute", bottom: "20px", left: r.x, fontSize: "40px", animation: "floatUp 3s ease-out forwards", pointerEvents: "none", zIndex: 10 }}>{r.emoji}</div>
                     ))}
@@ -1352,6 +1448,18 @@ function Room() {
                         )}
                     </div>
                     <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                        <PlaybackControls
+                            roomId={roomId}
+                            roomDocId={roomDocId}
+                            isYouTube={isYouTubeVideo}
+                            videoRef={videoRef}
+                            iframeRef={iframeRef}
+                            playbackRate={playbackRate}
+                            quality={videoQuality}
+                            onPlaybackRateChange={setPlaybackRate}
+                            onQualityChange={setVideoQuality}
+                            T={T}
+                        />
                         <button onClick={showVideoCall ? endVideoCall : startVideoCall} disabled={callStatus === "calling"}
                             style={{ padding: "8px 14px", backgroundColor: showVideoCall ? "#e74c3c" : callStatus === "calling" ? "#666" : "#27ae60", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
                             {showVideoCall ? "📵 Call End" : callStatus === "calling" ? "⏳ Calling..." : "📹 Video Call"}
