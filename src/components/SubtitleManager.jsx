@@ -276,7 +276,7 @@ export function SubtitleManager({ roomId, roomDocId, currentTime, isYouTube, T }
                     <div style={{
                         position: 'absolute',
                         bottom: '48px',
-                        left: 0,
+                        right: 0,
                         backgroundColor: T.card,
                         border: `1px solid ${T.border}`,
                         borderRadius: '12px',
