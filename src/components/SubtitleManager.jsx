@@ -223,7 +223,7 @@ export function SubtitleManager({ roomId, roomDocId, currentTime, isYouTube, T }
     }[position] || { bottom: '10%' };
 
     return (
-        <>
+        <div style={{ position: "absolute", inset: 0, zIndex: 12, pointerEvents: "none" }}>
             {/* Subtitle Display Overlay */}
             {activeSubtitle && (
                 <div style={{
@@ -250,7 +250,7 @@ export function SubtitleManager({ roomId, roomDocId, currentTime, isYouTube, T }
             )}
 
             {/* Subtitle Control Button */}
-            <div style={{ position: 'relative', display: 'inline-block' }}>
+            <div style={{ position: 'absolute', right: '16px', bottom: '16px', display: 'inline-block', pointerEvents: 'auto' }}>
                 <button 
                     onClick={() => setShowSubtitleMenu(!showSubtitleMenu)}
                     style={{
@@ -475,7 +475,7 @@ export function SubtitleManager({ roomId, roomDocId, currentTime, isYouTube, T }
                     </div>
                 )}
             </div>
-        </>
+        </div>
     );
 }
 

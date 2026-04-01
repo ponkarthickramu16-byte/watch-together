@@ -1403,15 +1403,13 @@ function Room() {
                             </button>
                         </div>
                     )}
-                    <div style={{ position: "absolute", bottom: "16px", right: "16px", zIndex: 12 }}>
-                        <SubtitleManager
-                            roomId={roomId}
-                            roomDocId={roomDocId}
-                            currentTime={currentVideoTime}
-                            isYouTube={isYouTubeVideo}
-                            T={T}
-                        />
-                    </div>
+                    <SubtitleManager
+                        roomId={roomId}
+                        roomDocId={roomDocId}
+                        currentTime={currentVideoTime}
+                        isYouTube={isYouTubeVideo}
+                        T={T}
+                    />
                     {floatingReactions.map((r) => (
                         <div key={r.id} style={{ position: "absolute", bottom: "20px", left: r.x, fontSize: "40px", animation: "floatUp 3s ease-out forwards", pointerEvents: "none", zIndex: 10 }}>{r.emoji}</div>
                     ))}
