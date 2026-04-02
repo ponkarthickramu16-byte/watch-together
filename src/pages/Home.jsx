@@ -5,6 +5,7 @@ import { collection, addDoc, query, where, onSnapshot, orderBy, doc, getDoc, set
 import ProfileSetup from "./ProfileSetup";
 import { signOut } from "firebase/auth";
 import { uploadToCloudinary } from "../cloudinary";
+import AdvancedSearch from "../components/AdvancedSearch";
 
 const generateRoomId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
@@ -56,6 +57,7 @@ function Home({ user }) {
     const [profile, setProfile] = useState(null);      // user's Firestore profile
     const [profileLoading, setProfileLoading] = useState(true);
     const [showProfileSetup, setShowProfileSetup] = useState(false);
+    const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
 
     // ✅ Bug fix #4 — prevent double-click creating 2 rooms
     const creatingRef = useRef(false);
@@ -491,9 +493,26 @@ function Home({ user }) {
             {/* ===== WATCH HISTORY ===== */}
             {activeTab === "history" && (
                 <div style={S.card}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", gap: "12px", flexWrap: "wrap" }}>
                         <h2 style={{ color: "white", fontSize: "20px", margin: 0 }}>📜 Watch History</h2>
-                        <span style={{ color: "#555", fontSize: "13px" }}>மொத்தம் {history.length} movies</span>
+                        <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                            <span style={{ color: "#555", fontSize: "13px" }}>மொத்தம் {history.length} movies</span>
+                            <button
+                                onClick={() => setShowAdvancedSearch(true)}
+                                style={{
+                                    padding: "8px 16px",
+                                    backgroundColor: "#3498db",
+                                    color: "white",
+                                    border: "none",
+                                    borderRadius: "8px",
+                                    cursor: "pointer",
+                                    fontSize: "13px",
+                                    fontWeight: "bold"
+                                }}
+                            >
+                                🔍 Advanced Search
+                            </button>
+                        </div>
                     </div>
 
                     {/* ✅ Bug fix #2 — show index error with fix link */}
@@ -601,6 +620,23 @@ function Home({ user }) {
             )}
 
             <style>{`@keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }`}</style>
+            {showAdvancedSearch && (
+                <AdvancedSearch
+                    user={user}
+                    onClose={() => setShowAdvancedSearch(false)}
+                    T={{
+                        bg: "#0f0f0f",
+                        card: "#1a1a1a",
+                        card2: "#2a2a2a",
+                        border: "#333",
+                        text: "white",
+                        text2: "#aaa",
+                        text3: "#666",
+                        primary: "#ff6b35",
+                        secondary: "#3498db",
+                    }}
+                />
+            )}
         </div>
     );
 }

@@ -1,5 +1,7 @@
 import SubtitleManager from "../components/SubtitleManager";
 import PlaybackControls from "../components/PlaybackControls";
+import ThemeCustomizer, { THEME_PRESETS } from "../components/ThemeCustomizer";
+import WatchPartyScheduler from "../components/WatchPartyScheduler";
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { db, auth } from "../firebase";
@@ -380,6 +382,9 @@ function Room() {
     const [playbackRate, setPlaybackRate] = useState(1);
     const [videoQuality, setVideoQuality] = useState('auto');
     const [currentVideoTime, setCurrentVideoTime] = useState(0);
+    const [showThemeCustomizer, setShowThemeCustomizer] = useState(false);
+    const [roomTheme, setRoomTheme] = useState(THEME_PRESETS.default.colors);
+    const [backgroundPattern, setBackgroundPattern] = useState("none");
 
     // Firebase auth is async on first load; `auth.currentUser` can be null briefly.
     // We wait for auth state to be resolved before writing watchHistory so
@@ -1235,13 +1240,33 @@ function Room() {
         } catch (err) { showToast("Voice send fail: " + err.message, "❌", "#e74c3c"); }
     }, [roomId, username, showToast]);
 
+    useEffect(() => {
+        if (!roomData?.theme) return;
+        setRoomTheme(roomData.theme.colors || THEME_PRESETS.default.colors);
+        setBackgroundPattern(roomData.theme.pattern || "none");
+    }, [roomData?.theme]);
+
+    const patternImage =
+        backgroundPattern !== "none"
+            ? (backgroundPattern === "dots"
+                ? "radial-gradient(circle, rgba(255,255,255,0.05) 1px, transparent 1px)"
+                : backgroundPattern === "lines"
+                    ? "repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(255,255,255,0.03) 10px, rgba(255,255,255,0.03) 20px)"
+                    : backgroundPattern === "grid"
+                        ? "linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px)"
+                        : "repeating-radial-gradient(circle at 0 0, transparent 0, rgba(255,255,255,0.03) 20px, transparent 40px)")
+            : "none";
+    const patternSize = backgroundPattern === "grid" ? "20px 20px" : "40px 40px";
+
     const T = isDark ? {
-        bg: "#0f0f0f", card: "#1a1a1a", card2: "#2a2a2a",
-        border: "#333", text: "white", text2: "#aaa", text3: "#666",
-        playerBg: "#000", reactionBg: "#111",
+        bg: roomTheme.bg, card: roomTheme.card, card2: roomTheme.card2,
+        border: roomTheme.border, text: roomTheme.text, text2: roomTheme.text2, text3: roomTheme.text3,
+        primary: roomTheme.primary, secondary: roomTheme.secondary,
+        playerBg: "#000", reactionBg: roomTheme.card,
     } : {
         bg: "#f5f5f5", card: "#ffffff", card2: "#eeeeee",
         border: "#ddd", text: "#111111", text2: "#555555", text3: "#888888",
+        primary: "#ff6b35", secondary: "#3498db",
         playerBg: "#222", reactionBg: "#e8e8e8",
     };
 
@@ -1286,9 +1311,29 @@ function Room() {
     const hasMovieUrl = !!movieUrl;
 
     return (
-        <div style={{ backgroundColor: T.bg, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+        <div style={{
+            backgroundColor: T.bg,
+            backgroundImage: patternImage,
+            backgroundSize: patternSize,
+            minHeight: "100vh",
+            display: "flex",
+            flexDirection: "column"
+        }}>
             <Toast toasts={toasts} />
             {showHistory && <WatchHistoryModal roomId={roomId} onClose={() => setShowHistory(false)} T={T} />}
+            {showThemeCustomizer && (
+                <ThemeCustomizer
+                    roomId={roomId}
+                    roomDocId={roomDocId}
+                    currentTheme={roomTheme}
+                    onThemeChange={(newTheme, pattern) => {
+                        setRoomTheme(newTheme);
+                        setBackgroundPattern(pattern);
+                    }}
+                    onClose={() => setShowThemeCustomizer(false)}
+                    T={T}
+                />
+            )}
 
             {isFullscreen && (
                 <div style={{ position: "fixed", inset: 0, zIndex: 9000, pointerEvents: "none" }}>
@@ -1314,7 +1359,15 @@ function Room() {
             )}
 
             {/* ── FIXED LAYOUT: reaction bar + toolbar heights known, player fills the rest ── */}
-            <div style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", backgroundColor: T.bg }}>
+            <div style={{
+                position: "fixed",
+                inset: 0,
+                display: "flex",
+                flexDirection: "column",
+                backgroundColor: T.bg,
+                backgroundImage: patternImage,
+                backgroundSize: patternSize,
+            }}>
 
                 {/* ── PLAYER: fills all space above the two fixed bars ── */}
                 <div
@@ -1446,6 +1499,42 @@ function Room() {
                         )}
                     </div>
                     <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                        <button
+                            onClick={() => setShowThemeCustomizer(true)}
+                            style={{
+                                padding: "8px 14px",
+                                backgroundColor: T.card2,
+                                color: T.text,
+                                border: `1px solid ${T.border}`,
+                                borderRadius: "8px",
+                                cursor: "pointer",
+                                fontSize: "13px",
+                                fontWeight: "bold",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "6px"
+                            }}
+                        >
+                            <span>🎨</span>
+                            <span>Theme</span>
+                        </button>
+                        <WatchPartyScheduler
+                            roomId={roomId}
+                            roomDocId={roomDocId}
+                            onCountdownEnd={(schedule) => {
+                                if (!isPlaying) {
+                                    setIsPlaying(true);
+                                    updatePlayState(true, videoRef.current?.currentTime);
+                                    if (isYouTubeVideo) {
+                                        sendYtCmd("playVideo");
+                                    } else {
+                                        videoRef.current?.play?.().catch(() => { });
+                                    }
+                                }
+                                showToast(`🎬 ${schedule?.title || "Watch party"} started!`, "🎬", "#27ae60");
+                            }}
+                            T={T}
+                        />
                         <PlaybackControls
                             roomId={roomId}
                             roomDocId={roomDocId}
