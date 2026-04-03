@@ -27,7 +27,8 @@ const uploadLargeFile = async (file, resourceType, folder, onProgress) => {
         const chunk = file.slice(start, end);
         
         const formData = new FormData();
-        formData.append("file", chunk);
+        // Preserve original filename for better backend asset identification.
+        formData.append("file", chunk, file.name);
         formData.append("upload_preset", UPLOAD_PRESET);
         formData.append("folder", folder);
         formData.append("public_id", uniqueUploadId);
@@ -39,7 +40,9 @@ const uploadLargeFile = async (file, resourceType, folder, onProgress) => {
         
         try {
             const response = await fetch(
-                `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/${resourceType}/upload`,
+                // Cloudinary client-side chunked upload examples use `auto/upload`.
+                // Using `video/upload` can cause Cloudinary to validate differently for chunked requests.
+                `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/auto/upload`,
                 {
                     method: "POST",
                     body: formData,
