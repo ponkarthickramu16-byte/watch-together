@@ -254,21 +254,75 @@ function Home({ user }) {
     };
     const handleFileUpload = async (file) => {
         if (!file) return;
-        const isVideo = file.type.startsWith("video/") || file.name.match(/\.(mp4|mkv|avi|mov|webm|m4v|3gp|flv|wmv)$/i);
-        if (!isVideo) { setError("❌ Video file மட்டும் upload பண்ணு (MP4, MKV, MOV...)"); return; }
-        const maxSize = 100 * 1024 * 1024;
-        if (file.size > maxSize) { setError(`❌ File too big! Max 100MB. உன் file: ${(file.size / 1024 / 1024).toFixed(0)}MB — YouTube link use பண்ணு!`); return; }
-        setError(""); setUploading(true); setUploadProgress(0);
+
+        // Validate video file type
+        const isVideo = file.type.startsWith("video/") ||
+            file.name.match(/\.(mp4|mkv|avi|mov|webm|m4v|3gp|flv|wmv)$/i);
+
+        if (!isVideo) {
+            setError("❌ Video file மட்டும் upload பண்ணு (MP4, MKV, MOV...)");
+            return;
+        }
+
+        // Updated: Maximum file size is now 2GB (2048MB)
+        const maxSizeMB = 2048; // 2GB
+        const fileSizeMB = file.size / (1024 * 1024);
+
+        console.log(`[Upload] File name: ${file.name}`);
+        console.log(`[Upload] File size: ${fileSizeMB.toFixed(2)}MB`);
+        console.log(`[Upload] File type: ${file.type}`);
+
+        if (fileSizeMB > maxSizeMB) {
+            setError(
+                `❌ File too big! Maximum ${maxSizeMB}MB (${(maxSizeMB / 1024).toFixed(1)}GB).
+                உன் file: ${fileSizeMB.toFixed(0)}MB
+                
+                💡 Tips:
+                - Use video compression tools
+                - Upload to YouTube and use the link instead
+                - Split into smaller parts`
+            );
+            return;
+        }
+
+        // Show upload type based on file size
+        if (fileSizeMB > 100) {
+            console.log(`[Upload] Large file detected (${fileSizeMB.toFixed(0)}MB) - Using chunked upload`);
+        } else {
+            console.log(`[Upload] Standard upload for ${fileSizeMB.toFixed(0)}MB file`);
+        }
+
+        setError("");
+        setUploading(true);
+        setUploadProgress(0);
+
         try {
-            const url = await uploadToCloudinary(file, (p) => setUploadProgress(p));
+            // uploadToCloudinary automatically handles chunking for large files
+            const url = await uploadToCloudinary(file, (progress) => {
+                setUploadProgress(progress);
+                console.log(`[Upload] Progress: ${progress}%`);
+            });
+
+            console.log(`[Upload] Success! URL: ${url}`);
+
+            // Create room with the uploaded video
             await createRoom(url, "upload");
+
         } catch (err) {
+            console.error("[Upload] Error:", err);
             setError("❌ Upload fail: " + err.message);
+
+            // Show helpful error message
+            if (err.message.includes("chunk")) {
+                setError("❌ Upload interrupted. Please check your internet connection and try again.");
+            }
         } finally {
-            setUploading(false); setUploadProgress(0);
+            setUploading(false);
+            setUploadProgress(0);
             creatingRef.current = false;
         }
     };
+
 
     const handleFileChange = (e) => { const f = e.target.files[0]; if (f) handleFileUpload(f); e.target.value = ""; };
     const handleDrop = (e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFileUpload(f); };
@@ -442,9 +496,21 @@ function Home({ user }) {
                                 display: "block", cursor: "pointer",
                             }}>
                             <div style={{ fontSize: "48px", marginBottom: "12px" }}>📁</div>
-                            <p style={{ color: "white", fontSize: "16px", margin: "0 0 8px 0", fontWeight: "bold" }}>இங்க tap பண்ணி video select பண்ணு</p>
-                            <p style={{ color: "#555", fontSize: "13px", margin: "0 0 4px 0" }}>Gallery / Files app-ல இருந்து select பண்ணலாம்</p>
-                            <p style={{ color: "#444", fontSize: "12px", margin: 0 }}>MP4, MKV, MOV, AVI • Max 100MB</p>
+                            <p style={{ color: "white", fontSize: "16px", fontWeight: "bold", margin: "0 0 8px 0" }}>
+                                Drag & drop video file இங்க
+                            </p>
+                            <p style={{ color: "#666", fontSize: "13px", margin: "0 0 16px 0" }}>
+                                அல்லது click பண்ணி select பண்ணு
+                            </p>
+                            <p style={{ color: "#888", fontSize: "11px", margin: "0 0 12px 0" }}>
+                                ✅ Support: MP4, MKV, AVI, MOV, WEBM, M4V
+                            </p>
+                            <p style={{ color: "#ff6b35", fontSize: "12px", fontWeight: "bold", margin: 0 }}>
+                                📦 Max Size: 2GB (2048MB) {/* UPDATED */}
+                            </p>
+                            <p style={{ color: "#666", fontSize: "10px", margin: "4px 0 0 0" }}>
+                                💡 Large files (&gt;100MB) use smart chunked upload
+                            </p>
                             <input id="fileInput" type="file" accept="video/*" onChange={handleFileChange} style={{ display: "none" }} />
                         </label>
                     ) : (
