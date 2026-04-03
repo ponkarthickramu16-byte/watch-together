@@ -2,6 +2,7 @@ import SubtitleManager from "../components/SubtitleManager";
 import PlaybackControls from "../components/PlaybackControls";
 import ThemeCustomizer, { THEME_PRESETS } from "../components/ThemeCustomizer";
 import WatchPartyScheduler from "../components/WatchPartyScheduler";
+import ResizableChatLayout from "../components/ResizableChatLayout";
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { db, auth } from "../firebase";
@@ -357,7 +358,7 @@ function Room() {
     const [newMessage, setNewMessage] = useState("");
     const [username, setUsername] = useState("");
     const [nameSet, setNameSet] = useState(false);
-    const [showChat, setShowChat] = useState(true);
+    const [showChat, setShowChat] = useState(false);
     const [floatingReactions, setFloatingReactions] = useState([]);
     const [livekitToken, setLivekitToken] = useState(null);
     const [showVideoCall, setShowVideoCall] = useState(false);
@@ -413,7 +414,7 @@ function Room() {
     const historyLoggedRef = useRef(false);
     const joinedRef = useRef(false);
     const prevOnlineRef = useRef([]);
-    const showChatRef = useRef(true); // must match showChat useState(true) initial value
+    const showChatRef = useRef(false); // must match showChat useState(false) initial value
     const reactionTimers = useRef([]); // cleanup floating reaction timeouts on unmount
     const lastReactionTimeRef = useRef({}); // per-emoji debounce — flood prevention
 
@@ -1369,103 +1370,246 @@ function Room() {
                 backgroundSize: patternSize,
             }}>
 
-                {/* ── PLAYER: fills all space above the two fixed bars ── */}
-                <div
-                    ref={playerContainerRef}
-                    style={isFullscreen
-                        ? { position: "fixed", inset: 0, zIndex: 8999, backgroundColor: "#000" }
-                        : { flex: 1, backgroundColor: T.playerBg, position: "relative", overflow: "hidden", minHeight: 0 }
-                    }
-                >
-                    {isYouTubeVideo && youtubeId ? (
-                        <div style={{ width: "100%", height: "100%", position: "relative" }}>
-                            <iframe ref={iframeRef}
-                                src={getYouTubeSrc(youtubeId)}
-                                style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
-                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                                allowFullScreen
-                                onLoad={() => {
-                                    console.log("[Watch Together] YouTube iframe loaded successfully");
-                                    setTimeout(() => {
-                                        if (!ytReadyRef.current) {
-                                            ytReadyRef.current = true;
-                                            const queue = pendingYtCmdRef.current;
-                                            pendingYtCmdRef.current = [];
-                                            queue.forEach(func => sendYtCmd(func));
-                                        }
-                                        if (isPlayingRef.current) setNeedsUserGesture(true);
-                                    }, 1500);
-                                }}
-                                onError={(e) => {
-                                    console.error("[Watch Together] YouTube iframe error:", e);
-                                    showToast("YouTube video load ஆகல! URL சரியா check பண்ணு.", "❌", "#e74c3c");
-                                }} />
-
-                            {needsUserGesture && (
-                                <div
-                                    onClick={() => {
-                                        setNeedsUserGesture(false);
-                                        sendYtCmd("unMute");
-                                        sendYtCmd("playVideo");
-                                    }}
-                                    style={{
-                                        position: "absolute", inset: 0, zIndex: 20,
-                                        backgroundColor: "rgba(0,0,0,0.65)",
-                                        display: "flex", flexDirection: "column",
-                                        alignItems: "center", justifyContent: "center",
-                                        cursor: "pointer", gap: "12px",
-                                    }}>
-                                    <div style={{ fontSize: "56px" }}>▶️</div>
-                                    <p style={{ color: "white", fontSize: "18px", fontWeight: "bold", margin: 0 }}>Tap to Sync & Play</p>
-                                    <p style={{ color: "#aaa", fontSize: "13px", margin: 0 }}>Browser autoplay block — ஒரு click போதும்!</p>
-                                </div>
-                            )}
-
-                            <div style={{ position: "absolute", bottom: "16px", left: "50%", transform: "translateX(-50%)", zIndex: 10 }}>
-                                <button onClick={() => {
-                                    const p = !isPlaying;
-                                    setIsPlaying(p);
-                                    updatePlayState(p);
-                                    sendYtCmd(p ? "playVideo" : "pauseVideo");
-                                }}
-                                    style={{ padding: "8px 24px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", backgroundColor: isPlaying ? "#555" : "#ff6b35" }}>
-                                    {isPlaying ? "⏸ Pause Sync" : "▶ Play Sync"}
-                                </button>
-                            </div>
-                        </div>
-                    ) : hasMovieUrl ? (
-                        <video
-                            ref={videoRef}
-                            src={movieUrl}
-                            controls
-                            playsInline
-                            style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
-                            onPlay={() => { if (joinedRef.current) updatePlayState(true, videoRef.current?.currentTime); }}
-                            onPause={() => { if (joinedRef.current) updatePlayState(false, videoRef.current?.currentTime); }}
-                            onTimeUpdate={(e) => setCurrentVideoTime(e.target.currentTime)}
-                            onSeeked={handleSeek}
-                        />
-                    ) : (
-                        <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "16px", padding: "20px" }}>
-                            <span style={{ fontSize: "64px" }}>🎬</span>
-                            <p style={{ color: T.text, fontSize: "18px", fontWeight: "bold", margin: 0, textAlign: "center" }}>Movie URL இல்ல!</p>
-                            <p style={{ color: T.text2, fontSize: "14px", margin: 0, textAlign: "center" }}>Home page-ல போய் YouTube URL add பண்ணு</p>
-                            <button onClick={() => navigate("/")}
-                                style={{ padding: "12px 24px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "10px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", marginTop: "8px" }}>
-                                🏠 Home-க்கு போ
-                            </button>
-                        </div>
-                    )}
-                    <SubtitleManager
-                        roomId={roomId}
-                        roomDocId={roomDocId}
-                        currentTime={currentVideoTime}
-                        isYouTube={isYouTubeVideo}
+                {/* ── SPLIT SCREEN: Video + Chat ── */}
+                <div style={{ flex: 1, minHeight: 0 }}>
+                    <ResizableChatLayout
                         T={T}
+                        defaultSplit={60}
+                        minVideoHeight={300}
+                        minChatHeight={200}
+                        videoContent={
+                            <div
+                                ref={playerContainerRef}
+                                style={isFullscreen
+                                    ? { position: "fixed", inset: 0, zIndex: 8999, backgroundColor: "#000" }
+                                    : { width: "100%", height: "100%", backgroundColor: T.playerBg, position: "relative", overflow: "hidden", minHeight: 0 }
+                                }
+                            >
+                                {isYouTubeVideo && youtubeId ? (
+                                    <div style={{ width: "100%", height: "100%", position: "relative" }}>
+                                        <iframe ref={iframeRef}
+                                            src={getYouTubeSrc(youtubeId)}
+                                            style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
+                                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                            allowFullScreen
+                                            onLoad={() => {
+                                                console.log("[Watch Together] YouTube iframe loaded successfully");
+                                                setTimeout(() => {
+                                                    if (!ytReadyRef.current) {
+                                                        ytReadyRef.current = true;
+                                                        const queue = pendingYtCmdRef.current;
+                                                        pendingYtCmdRef.current = [];
+                                                        queue.forEach(func => sendYtCmd(func));
+                                                    }
+                                                    if (isPlayingRef.current) setNeedsUserGesture(true);
+                                                }, 1500);
+                                            }}
+                                            onError={(e) => {
+                                                console.error("[Watch Together] YouTube iframe error:", e);
+                                                showToast("YouTube video load ஆகல! URL சரியா check பண்ணு.", "❌", "#e74c3c");
+                                            }} />
+
+                                        {needsUserGesture && (
+                                            <div
+                                                onClick={() => {
+                                                    setNeedsUserGesture(false);
+                                                    sendYtCmd("unMute");
+                                                    sendYtCmd("playVideo");
+                                                }}
+                                                style={{
+                                                    position: "absolute", inset: 0, zIndex: 20,
+                                                    backgroundColor: "rgba(0,0,0,0.65)",
+                                                    display: "flex", flexDirection: "column",
+                                                    alignItems: "center", justifyContent: "center",
+                                                    cursor: "pointer", gap: "12px",
+                                                }}>
+                                                <div style={{ fontSize: "56px" }}>▶️</div>
+                                                <p style={{ color: "white", fontSize: "18px", fontWeight: "bold", margin: 0 }}>Tap to Sync & Play</p>
+                                                <p style={{ color: "#aaa", fontSize: "13px", margin: 0 }}>Browser autoplay block — ஒரு click போதும்!</p>
+                                            </div>
+                                        )}
+
+                                        <div style={{ position: "absolute", bottom: "16px", left: "50%", transform: "translateX(-50%)", zIndex: 10 }}>
+                                            <button onClick={() => {
+                                                const p = !isPlaying;
+                                                setIsPlaying(p);
+                                                updatePlayState(p);
+                                                sendYtCmd(p ? "playVideo" : "pauseVideo");
+                                            }}
+                                                style={{ padding: "8px 24px", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", backgroundColor: isPlaying ? "#555" : "#ff6b35" }}>
+                                                {isPlaying ? "⏸ Pause Sync" : "▶ Play Sync"}
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : hasMovieUrl ? (
+                                    <video
+                                        ref={videoRef}
+                                        src={movieUrl}
+                                        controls
+                                        playsInline
+                                        style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
+                                        onPlay={() => { if (joinedRef.current) updatePlayState(true, videoRef.current?.currentTime); }}
+                                        onPause={() => { if (joinedRef.current) updatePlayState(false, videoRef.current?.currentTime); }}
+                                        onTimeUpdate={(e) => setCurrentVideoTime(e.target.currentTime)}
+                                        onSeeked={handleSeek}
+                                    />
+                                ) : (
+                                    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "16px", padding: "20px" }}>
+                                        <span style={{ fontSize: "64px" }}>🎬</span>
+                                        <p style={{ color: T.text, fontSize: "18px", fontWeight: "bold", margin: 0, textAlign: "center" }}>Movie URL இல்ல!</p>
+                                        <p style={{ color: T.text2, fontSize: "14px", margin: 0, textAlign: "center" }}>Home page-ல போய் YouTube URL add பண்ணு</p>
+                                        <button onClick={() => navigate("/")}
+                                            style={{ padding: "12px 24px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "10px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", marginTop: "8px" }}>
+                                            🏠 Home-க்கு போ
+                                        </button>
+                                    </div>
+                                )}
+                                <SubtitleManager
+                                    roomId={roomId}
+                                    roomDocId={roomDocId}
+                                    currentTime={currentVideoTime}
+                                    isYouTube={isYouTubeVideo}
+                                    T={T}
+                                />
+                                {floatingReactions.map((r) => (
+                                    <div key={r.id} style={{ position: "absolute", bottom: "20px", left: r.x, fontSize: "40px", animation: "floatUp 3s ease-out forwards", pointerEvents: "none", zIndex: 10 }}>{r.emoji}</div>
+                                ))}
+                            </div>
+                        }
+                        chatContent={
+                            <div style={{ display: "flex", flexDirection: "column", height: "100%", backgroundColor: T.card, overflow: "hidden" }}>
+                                <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                        <span style={{ color: T.text, fontWeight: "bold", fontSize: "14px" }}>💬 Chat</span>
+                                        <span style={{ backgroundColor: "rgba(39,174,96,0.15)", color: "#27ae60", border: "1px solid rgba(39,174,96,0.3)", borderRadius: "8px", padding: "1px 7px", fontSize: "10px", fontWeight: "bold" }}>🔐 E2E</span>
+                                        {onlineUsers.filter(u => u !== username).length > 0 ? (
+                                            <span style={{ display: "flex", alignItems: "center", gap: "3px" }}>
+                                                <span style={{ width: "7px", height: "7px", backgroundColor: "#27ae60", borderRadius: "50%", display: "inline-block", animation: "pulse2 2s infinite" }} />
+                                                <span style={{ color: "#27ae60", fontSize: "10px", fontWeight: "bold" }}>Online</span>
+                                            </span>
+                                        ) : (
+                                            <span style={{ display: "flex", alignItems: "center", gap: "3px" }}>
+                                                <span style={{ width: "7px", height: "7px", backgroundColor: "#555", borderRadius: "50%", display: "inline-block" }} />
+                                                <span style={{ color: "#555", fontSize: "10px" }}>Offline</span>
+                                            </span>
+                                        )}
+                                    </div>
+                                    <span style={{ color: "#ff6b35", fontSize: "13px" }}>👤 {username}</span>
+                                </div>
+
+                                <div ref={chatScrollRef} style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                                    {messages.length === 0 && <p style={{ color: T.text3, textAlign: "center", fontSize: "13px" }}>message இல்ல - first message பண்ணு! 👋</p>}
+                                    {messages.map((msg) => {
+                                        const isMe = msg.username === username;
+                                        const isRead = (msg.readBy || []).length > 1;
+                                        return (
+                                            <div key={msg.id}
+                                                style={{ maxWidth: "85%", alignSelf: isMe ? "flex-end" : "flex-start", display: "flex", flexDirection: "column", gap: "2px", position: "relative" }}
+                                                onContextMenu={(e) => { e.preventDefault(); if (msg.type !== "voice") setReplyTo({ id: msg.id, username: msg.username, message: msg.message }); }}
+                                                onClick={() => { if (msg.type !== "voice") setReplyTo({ id: msg.id, username: msg.username, message: msg.message }); }}>
+                                                {/* Edit/Delete actions for own messages */}
+                                                {isMe && msg.type !== "voice" && (
+                                                    <div style={{ display: "flex", gap: "4px", alignSelf: "flex-end", marginBottom: "2px" }}>
+                                                        <button onClick={(e) => { e.stopPropagation(); setEditingMsg({ id: msg.id, message: msg.message }); setNewMessage(msg.message); }}
+                                                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: "13px", color: T.text3, padding: "2px 4px", borderRadius: "4px" }}
+                                                            title="Edit">✏️</button>
+                                                        <button onClick={(e) => { e.stopPropagation(); if (window.confirm("Delete this message?")) deleteMessage(msg.id); }}
+                                                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: "13px", color: T.text3, padding: "2px 4px", borderRadius: "4px" }}
+                                                            title="Delete">🗑️</button>
+                                                    </div>
+                                                )}
+                                                {msg.replyToMessageDecrypted && (
+                                                    <div style={{ backgroundColor: isMe ? "rgba(0,0,0,0.2)" : "rgba(255,255,255,0.1)", borderLeft: "3px solid #ff6b35", borderRadius: "6px", padding: "4px 8px", marginBottom: "2px" }}>
+                                                        <p style={{ color: isMe ? "rgba(255,255,255,0.7)" : T.text2, fontSize: "10px", margin: "0 0 2px 0", fontWeight: "bold" }}>↩ {msg.replyToUsername}</p>
+                                                        <p style={{ color: isMe ? "rgba(255,255,255,0.6)" : T.text3, fontSize: "11px", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "180px" }}>{msg.replyToMessageDecrypted}</p>
+                                                    </div>
+                                                )}
+                                                <div style={{ padding: "8px 12px", borderRadius: "12px", display: "flex", flexDirection: "column", backgroundColor: isMe ? "#ff6b35" : T.card2, cursor: "pointer", transition: "opacity 0.15s" }}
+                                                    onMouseEnter={e => e.currentTarget.style.opacity = "0.85"}
+                                                    onMouseLeave={e => e.currentTarget.style.opacity = "1"}>
+                                                    {!isMe && <p style={{ color: T.text2, fontSize: "11px", margin: "0 0 4px 0" }}>{msg.username}</p>}
+                                                    {msg.type === "voice" && msg.voiceUrl ? (
+                                                        <div>
+                                                            <p style={{ color: "rgba(255,255,255,0.8)", fontSize: "11px", margin: "0 0 4px 0" }}>🎙️ Voice message</p>
+                                                            <audio src={msg.voiceUrl} controls style={{ width: "180px", height: "28px" }} />
+                                                        </div>
+                                                    ) : (
+                                                        <p style={{ color: "white", fontSize: "14px", margin: 0, wordBreak: "break-word" }}>{msg.message}</p>
+                                                    )}
+                                                    {isMe && (
+                                                        <span style={{ alignSelf: "flex-end", marginTop: "2px", fontSize: "11px", color: isRead ? "#a8e6cf" : "rgba(255,255,255,0.5)" }}>
+                                                            {msg.editedAt && <span style={{ fontSize: "10px", marginRight: "4px", opacity: 0.7 }}>edited</span>}
+                                                            {isRead ? "✓✓" : "✓"}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                    {partnerTyping && (
+                                        <div style={{ alignSelf: "flex-start", backgroundColor: T.card2, padding: "8px 14px", borderRadius: "12px", display: "flex", alignItems: "center", gap: "6px" }}>
+                                            <span style={{ color: T.text2, fontSize: "12px" }}>type பண்றாங்க</span>
+                                            <span style={{ display: "flex", gap: "3px" }}>
+                                                {[0, 1, 2].map(i => <span key={i} style={{ width: "6px", height: "6px", backgroundColor: "#ff6b35", borderRadius: "50%", display: "inline-block", animation: `typingDot 1.2s ${i * 0.2}s infinite` }} />)}
+                                            </span>
+                                        </div>
+                                    )}
+                                    <div ref={chatEndRef} />
+                                </div>
+
+                                {showVoiceRecorder && (
+                                    <VoiceRecorder onSend={handleVoiceSend} onCancel={() => setShowVoiceRecorder(false)} T={T} />
+                                )}
+
+                                {!showVoiceRecorder && (
+                                    <div style={{ borderTop: `1px solid ${T.border}` }}>
+                                        {/* Edit mode bar */}
+                                        {editingMsg && (
+                                            <div style={{ padding: "6px 12px", backgroundColor: "rgba(52,152,219,0.15)", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${T.border}`, borderLeft: "3px solid #3498db" }}>
+                                                <div style={{ display: "flex", alignItems: "center", gap: "6px", flex: 1, minWidth: 0 }}>
+                                                    <span style={{ fontSize: "13px" }}>✏️</span>
+                                                    <p style={{ color: "#3498db", fontSize: "11px", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Editing message</p>
+                                                </div>
+                                                <button onClick={() => { setEditingMsg(null); setNewMessage(""); }}
+                                                    style={{ background: "none", border: "none", color: T.text3, cursor: "pointer", fontSize: "16px", padding: "0 4px", flexShrink: 0 }}>✕</button>
+                                            </div>
+                                        )}
+                                        {replyTo && !editingMsg && (
+                                            <div style={{ padding: "6px 12px", backgroundColor: T.card2, display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${T.border}` }}>
+                                                <div style={{ display: "flex", alignItems: "center", gap: "6px", flex: 1, minWidth: 0 }}>
+                                                    <span style={{ color: "#ff6b35", fontSize: "12px" }}>↩</span>
+                                                    <div style={{ minWidth: 0 }}>
+                                                        <p style={{ color: "#ff6b35", fontSize: "10px", margin: 0, fontWeight: "bold" }}>{replyTo.username}</p>
+                                                        <p style={{ color: T.text2, fontSize: "11px", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{replyTo.message}</p>
+                                                    </div>
+                                                </div>
+                                                <button onClick={() => setReplyTo(null)} style={{ background: "none", border: "none", color: T.text3, cursor: "pointer", fontSize: "16px", padding: "0 4px", flexShrink: 0 }}>✕</button>
+                                            </div>
+                                        )}
+                                        <div style={{ padding: "12px", display: "flex", gap: "6px", position: "relative" }}>
+                                            {showEmojiPicker && (
+                                                <EmojiPicker onSelect={handleEmojiSelect} onClose={() => setShowEmojiPicker(false)} />
+                                            )}
+                                            <button onClick={() => setShowEmojiPicker(p => !p)}
+                                                style={{ padding: "10px", backgroundColor: showEmojiPicker ? "#ff6b35" : T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>😊</button>
+                                            <input type="text"
+                                                placeholder={editingMsg ? "Edit message..." : replyTo ? "↩ Replying..." : "Message type பண்ணு..."}
+                                                value={newMessage}
+                                                onChange={handleTyping}
+                                                onKeyDown={(e) => { if (e.key === "Enter") sendMessage(); if (e.key === "Escape") { setEditingMsg(null); setNewMessage(""); setReplyTo(null); } }}
+                                                style={{ flex: 1, padding: "10px 12px", backgroundColor: T.card2, border: `1px solid ${editingMsg ? "#3498db" : replyTo ? "#ff6b35" : T.border}`, borderRadius: "8px", color: T.text, fontSize: "14px", outline: "none", minWidth: 0 }} />
+                                            <button onClick={() => setShowVoiceRecorder(true)}
+                                                style={{ padding: "10px", backgroundColor: T.card2, border: `1px solid ${T.border}`, borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>🎙️</button>
+                                            <button onClick={() => sendMessage()}
+                                                style={{ padding: "10px 14px", backgroundColor: editingMsg ? "#3498db" : "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "16px", flexShrink: 0 }}>
+                                                {editingMsg ? "💾" : "➤"}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        }
                     />
-                    {floatingReactions.map((r) => (
-                        <div key={r.id} style={{ position: "absolute", bottom: "20px", left: r.x, fontSize: "40px", animation: "floatUp 3s ease-out forwards", pointerEvents: "none", zIndex: 10 }}>{r.emoji}</div>
-                    ))}
                 </div>
 
                 {/* ── REACTION BAR ── */}
@@ -1570,12 +1714,6 @@ function Room() {
                         </button>
                         <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`🎬 என்னோட கூட movie பாரு! ${window.location.href}`)}`, "_blank")}
                             style={{ padding: "8px 14px", backgroundColor: "#25D366", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>💬 WhatsApp</button>
-                        <button onClick={() => setShowChat(!showChat)}
-                            style={{ padding: "8px 14px", backgroundColor: "#ff6b35", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
-                            {showChat ? "💬 Hide Chat" : (
-                                <>💬 Chat{unreadCount > 0 && <span style={{ marginLeft: "6px", backgroundColor: "#e74c3c", color: "white", borderRadius: "50%", padding: "1px 6px", fontSize: "11px", fontWeight: "bold" }}>{unreadCount}</span>}</>
-                            )}
-                        </button>
                     </div>
                 </div>
 
