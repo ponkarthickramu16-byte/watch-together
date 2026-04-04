@@ -252,76 +252,158 @@ function Home({ user }) {
             creatingRef.current = false;
         }
     };
-    const handleFileUpload = async (file) => {
-        if (!file) return;
+    // Home.jsx - handleFileUpload COMPLETE REPLACEMENT
 
-        // Validate video file type
-        const isVideo = file.type.startsWith("video/") ||
-            file.name.match(/\.(mp4|mkv|avi|mov|webm|m4v|3gp|flv|wmv)$/i);
+// Find this function in your Home.jsx (around line 255) and REPLACE it completely:
 
-        if (!isVideo) {
-            setError("❌ Video file மட்டும் upload பண்ணு (MP4, MKV, MOV...)");
-            return;
-        }
-
-        // Updated: Maximum file size is now 2GB (2048MB)
-        const maxSizeMB = 2048; // 2GB
-        const fileSizeMB = file.size / (1024 * 1024);
-
-        console.log(`[Upload] File name: ${file.name}`);
-        console.log(`[Upload] File size: ${fileSizeMB.toFixed(2)}MB`);
-        console.log(`[Upload] File type: ${file.type}`);
-
-        if (fileSizeMB > maxSizeMB) {
-            setError(
-                `❌ File too big! Maximum ${maxSizeMB}MB (${(maxSizeMB / 1024).toFixed(1)}GB).
-                உன் file: ${fileSizeMB.toFixed(0)}MB
-                
-                💡 Tips:
-                - Use video compression tools
-                - Upload to YouTube and use the link instead
-                - Split into smaller parts`
-            );
-            return;
-        }
-
-        // Show upload type based on file size
-        if (fileSizeMB > 100) {
-            console.log(`[Upload] Large file detected (${fileSizeMB.toFixed(0)}MB) - Using chunked upload`);
-        } else {
-            console.log(`[Upload] Standard upload for ${fileSizeMB.toFixed(0)}MB file`);
-        }
-
-        setError("");
-        setUploading(true);
-        setUploadProgress(0);
-
-        try {
-            // uploadToCloudinary automatically handles chunking for large files
-            const url = await uploadToCloudinary(file, (progress) => {
-                setUploadProgress(progress);
+const handleFileUpload = async (file) => {
+    if (!file) return;
+    
+    // Validate video file type
+    const isVideo = file.type.startsWith("video/") || 
+                    file.name.match(/\.(mp4|mkv|avi|mov|webm|m4v|3gp|flv|wmv)$/i);
+    
+    if (!isVideo) {
+        setError("❌ Video file மட்டும் upload பண்ணு (MP4, MKV, MOV, AVI, WEBM...)");
+        return;
+    }
+    
+    // File size validation - 2GB max
+    const maxSizeMB = 2048; // 2GB
+    const fileSizeMB = file.size / (1024 * 1024);
+    
+    console.log(`[Upload] File: ${file.name}`);
+    console.log(`[Upload] Size: ${fileSizeMB.toFixed(2)}MB`);
+    console.log(`[Upload] Type: ${file.type}`);
+    
+    if (fileSizeMB > maxSizeMB) {
+        setError(
+            `❌ File too big! Maximum ${maxSizeMB}MB (${(maxSizeMB / 1024).toFixed(1)}GB). Your file: ${fileSizeMB.toFixed(0)}MB.
+            
+💡 Options:
+• Compress video using HandBrake or FFmpeg
+• Upload to YouTube and share the link
+• Split into smaller parts`
+        );
+        return;
+    }
+    
+    // Show info about upload method
+    if (fileSizeMB > 95) {
+        console.log(`[Upload] Large file detected (${fileSizeMB.toFixed(0)}MB) - Will use chunked upload`);
+    } else {
+        console.log(`[Upload] Standard upload for ${fileSizeMB.toFixed(0)}MB file`);
+    }
+    
+    setError("");
+    setUploading(true);
+    setUploadProgress(0);
+    
+    try {
+        console.log(`[Upload] Starting upload...`);
+        
+        // Upload with progress tracking
+        const url = await uploadToCloudinary(file, (progress) => {
+            setUploadProgress(progress);
+            
+            // Log milestones
+            if (progress === 25 || progress === 50 || progress === 75 || progress === 100) {
                 console.log(`[Upload] Progress: ${progress}%`);
-            });
-
-            console.log(`[Upload] Success! URL: ${url}`);
-
-            // Create room with the uploaded video
-            await createRoom(url, "upload");
-
-        } catch (err) {
-            console.error("[Upload] Error:", err);
-            setError("❌ Upload fail: " + err.message);
-
-            // Show helpful error message
-            if (err.message.includes("chunk")) {
-                setError("❌ Upload interrupted. Please check your internet connection and try again.");
             }
-        } finally {
-            setUploading(false);
-            setUploadProgress(0);
-            creatingRef.current = false;
+        });
+        
+        console.log(`[Upload] ✅ Success! Cloudinary URL: ${url}`);
+        
+        // Create room with uploaded video
+        await createRoom(url, "upload");
+        
+    } catch (err) {
+        console.error("[Upload] ❌ Error:", err);
+        
+        // User-friendly error messages
+        let errorMessage = "Upload failed: ";
+        
+        if (err.message.includes("Network error")) {
+            errorMessage += "Check your internet connection and try again.";
+        } else if (err.message.includes("File size too large")) {
+            errorMessage += "File exceeds Cloudinary limits. Try compressing or use YouTube.";
+        } else if (err.message.includes("chunk")) {
+            errorMessage += "Upload interrupted. Please try again.";
+        } else if (err.message.includes("upgrade your plan")) {
+            errorMessage += "Cloudinary account limit reached. Upgrade plan or use smaller files.";
+        } else {
+            errorMessage += err.message;
         }
-    };
+        
+        setError(`❌ ${errorMessage}`);
+        
+    } finally {
+        setUploading(false);
+        setUploadProgress(0);
+        creatingRef.current = false;
+    }
+};
+
+
+// Also UPDATE the UI text in upload area (around line 350-400):
+// Find the upload area div and update the size text:
+
+{uploading ? (
+    <div style={S.progressContainer}>
+        <div style={{ fontSize: "48px", marginBottom: "12px" }}>⏳</div>
+        <p style={{ color: "white", fontSize: "16px", fontWeight: "bold", margin: "0 0 8px 0" }}>
+            Uploading... {uploadProgress}%
+        </p>
+        <div style={S.progressBar}>
+            <div style={{ ...S.progressFill, width: `${uploadProgress}%` }} />
+        </div>
+        <p style={{ color: "#666", fontSize: "12px", margin: "12px 0 0 0" }}>
+            {uploadProgress < 30 && "Starting upload..."}
+            {uploadProgress >= 30 && uploadProgress < 70 && "Upload in progress, please wait..."}
+            {uploadProgress >= 70 && uploadProgress < 100 && "Almost done!"}
+            {uploadProgress === 100 && "Processing... Creating room..."}
+        </p>
+    </div>
+) : (
+    <div
+        style={{
+            ...S.uploadArea,
+            borderColor: dragOver ? "#ff6b35" : "#333",
+            backgroundColor: dragOver ? "rgba(255,107,53,0.1)" : "transparent"
+        }}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleDrop}
+    >
+        <div style={{ fontSize: "48px", marginBottom: "12px" }}>📁</div>
+        <p style={{ color: "white", fontSize: "16px", fontWeight: "bold", margin: "0 0 8px 0" }}>
+            Drag & drop video file here
+        </p>
+        <p style={{ color: "#666", fontSize: "13px", margin: "0 0 16px 0" }}>
+            or click to select from your device
+        </p>
+        <p style={{ color: "#888", fontSize: "11px", margin: "0 0 12px 0" }}>
+            ✅ Supported: MP4, MKV, AVI, MOV, WEBM, M4V
+        </p>
+        <p style={{ color: "#ff6b35", fontSize: "13px", fontWeight: "bold", margin: "0 0 6px 0" }}>
+            📦 Maximum Size: 2GB (2048MB)
+        </p>
+        <p style={{ color: "#666", fontSize: "10px", margin: 0 }}>
+            💡 Large files (&gt;100MB) use smart chunked upload
+        </p>
+        <input
+            type="file"
+            accept="video/*"
+            onChange={handleFileChange}
+            style={{ display: "none" }}
+            ref={(input) => {
+                if (input) {
+                    input.onclick = (e) => e.target.value = "";
+                }
+            }}
+        />
+    </div>
+)}
 
 
     const handleFileChange = (e) => { const f = e.target.files[0]; if (f) handleFileUpload(f); e.target.value = ""; };

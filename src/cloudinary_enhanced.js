@@ -31,6 +31,8 @@ const uploadLargeFile = async (file, resourceType, folder, onProgress) => {
         formData.append("file", chunk, file.name);
         formData.append("upload_preset", UPLOAD_PRESET);
         formData.append("folder", folder);
+        // Ensure Cloudinary applies the correct upload preset rules (max file size, formats, etc).
+        formData.append("resource_type", resourceType);
         formData.append("public_id", uniqueUploadId);
         
         // Chunk metadata
@@ -55,7 +57,11 @@ const uploadLargeFile = async (file, resourceType, folder, onProgress) => {
             
             if (!response.ok) {
                 const errorText = await response.text();
-                throw new Error(`Chunk ${chunkIndex + 1} upload failed: ${errorText}`);
+                // Cloudinary returns detailed JSON in `errorText` for validation issues.
+                // Example: File size too large. Got ... Maximum is 104857600.
+                throw new Error(
+                    `Chunk ${chunkIndex + 1} upload failed: ${errorText}`
+                );
             }
             
             const data = await response.json();
@@ -76,7 +82,16 @@ const uploadLargeFile = async (file, resourceType, folder, onProgress) => {
             
         } catch (error) {
             console.error(`[Cloudinary] Chunk ${chunkIndex + 1} upload error:`, error);
-            throw new Error(`Upload failed at chunk ${chunkIndex + 1}/${totalChunks}: ${error.message}`);
+            // Make Cloudinary "max file size" issues obvious to the user.
+            const msg = error?.message || String(error);
+            if (msg.includes("File size too large") || msg.includes("Maximum is 104857600")) {
+                throw new Error(
+                    `Cloudinary rejected the upload: file exceeds your current Cloudinary upload limit (100MB in this case). ` +
+                    `Fix: update your Cloudinary upload preset/max file size (the preset referenced by VITE_CLOUDINARY_UPLOAD_PRESET) or upgrade your plan. ` +
+                    `Details: ${msg}`
+                );
+            }
+            throw new Error(`Upload failed at chunk ${chunkIndex + 1}/${totalChunks}: ${msg}`);
         }
     }
 };
