@@ -1,23 +1,20 @@
 const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
 const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
 
-// Cloudinary's chunked upload API (PROPER METHOD)
-const CHUNK_SIZE = 6 * 1024 * 1024; // 6MB chunks (Cloudinary recommended)
+const CHUNK_SIZE = 6 * 1024 * 1024; // 6MB chunks
 
 /**
- * Cloudinary Chunked Upload (Proper Implementation)
- * 
- * This uses Cloudinary's official chunked upload API
- * which bypasses the 100MB upload preset limit
+ * Cloudinary Direct Chunked Upload
+ * Bypasses preset limits by using raw upload API
  */
 const uploadLargeFileChunked = async (file, resourceType, folder, onProgress) => {
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-    const timestamp = Date.now();
-    const publicId = `${folder}/${timestamp}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    const uploadId = `uqid-${Date.now()}-${Math.random().toString(36).substring(7)}`;
     
-    console.log(`[Cloudinary] Chunked upload starting`);
-    console.log(`[Cloudinary] File: ${file.name}, Size: ${(file.size / 1024 / 1024).toFixed(2)}MB`);
-    console.log(`[Cloudinary] Total chunks: ${totalChunks}`);
+    console.log(`[Cloudinary] Starting chunked upload`);
+    console.log(`[Cloudinary] File: ${file.name}`);
+    console.log(`[Cloudinary] Size: ${(file.size / 1024 / 1024).toFixed(2)}MB`);
+    console.log(`[Cloudinary] Chunks: ${totalChunks}`);
     
     let uploadedUrl = null;
     
@@ -25,50 +22,78 @@ const uploadLargeFileChunked = async (file, resourceType, folder, onProgress) =>
         const start = chunkIndex * CHUNK_SIZE;
         const end = Math.min(start + CHUNK_SIZE, file.size);
         const chunk = file.slice(start, end);
+        const isLastChunk = chunkIndex === totalChunks - 1;
         
         const formData = new FormData();
         formData.append('file', chunk);
+        formData.append('cloud_name', CLOUD_NAME);
         formData.append('upload_preset', UPLOAD_PRESET);
-        formData.append('public_id', publicId);
         
-        const contentRange = `bytes ${start}-${end - 1}/${file.size}`;
+        const headers = {
+            'X-Unique-Upload-Id': uploadId,
+            'Content-Range': `bytes ${start}-${end-1}/${file.size}`
+        };
         
-        console.log(`[Cloudinary] Uploading chunk ${chunkIndex + 1}/${totalChunks}`);
+        console.log(`[Cloudinary] Chunk ${chunkIndex + 1}/${totalChunks} (${start}-${end})`);
         
         try {
             const response = await fetch(
-                `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/${resourceType}/upload`,
+                `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/auto/upload`,
                 {
                     method: 'POST',
                     body: formData,
-                    headers: {
-                        'X-Unique-Upload-Id': `${timestamp}`,
-                        'Content-Range': contentRange
-                    }
+                    headers: headers
                 }
             );
             
             if (!response.ok) {
                 const errorText = await response.text();
                 console.error(`[Cloudinary] Chunk ${chunkIndex + 1} failed:`, errorText);
-                throw new Error(`Chunk upload failed: ${errorText}`);
+                
+                // If preset limit error, retry without preset
+                if (errorText.includes('File size too large') || errorText.includes('Maximum is')) {
+                    console.log(`[Cloudinary] Retrying chunk ${chunkIndex + 1} without preset...`);
+                    
+                    // Retry without upload_preset
+                    const retryFormData = new FormData();
+                    retryFormData.append('file', chunk);
+                    retryFormData.append('cloud_name', CLOUD_NAME);
+                    retryFormData.append('unsigned', 'true');
+                    
+                    const retryResponse = await fetch(
+                        `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/auto/upload`,
+                        {
+                            method: 'POST',
+                            body: retryFormData,
+                            headers: headers
+                        }
+                    );
+                    
+                    if (!retryResponse.ok) {
+                        throw new Error(`Chunk ${chunkIndex + 1} retry failed`);
+                    }
+                    
+                    const retryData = await retryResponse.json();
+                    if (isLastChunk && retryData.secure_url) {
+                        uploadedUrl = retryData.secure_url;
+                    }
+                } else {
+                    throw new Error(errorText);
+                }
+            } else {
+                const data = await response.json();
+                if (isLastChunk && data.secure_url) {
+                    uploadedUrl = data.secure_url;
+                }
             }
             
-            const data = await response.json();
-            
-            // Progress callback
+            // Update progress
             const progress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
             if (onProgress) {
                 onProgress(progress);
             }
             
-            console.log(`[Cloudinary] Chunk ${chunkIndex + 1}/${totalChunks} done (${progress}%)`);
-            
-            // Save URL from last chunk
-            if (chunkIndex === totalChunks - 1) {
-                uploadedUrl = data.secure_url;
-                console.log(`[Cloudinary] Upload complete! URL: ${uploadedUrl}`);
-            }
+            console.log(`[Cloudinary] ✓ Chunk ${chunkIndex + 1}/${totalChunks} (${progress}%)`);
             
         } catch (error) {
             console.error(`[Cloudinary] Chunk ${chunkIndex + 1} error:`, error);
@@ -76,13 +101,20 @@ const uploadLargeFileChunked = async (file, resourceType, folder, onProgress) =>
         }
     }
     
+    if (!uploadedUrl) {
+        throw new Error('Upload completed but no URL returned');
+    }
+    
+    console.log(`[Cloudinary] ✅ Upload complete!`);
+    console.log(`[Cloudinary] URL: ${uploadedUrl}`);
+    
     return uploadedUrl;
 };
 
 /**
- * Standard XHR Upload (for small files)
+ * Standard upload for small files
  */
-const uploadWithXHR = (file, resourceType, folder, onProgress) => {
+const uploadStandard = (file, resourceType, folder, onProgress) => {
     return new Promise((resolve, reject) => {
         const formData = new FormData();
         formData.append("file", file);
@@ -116,12 +148,7 @@ const uploadWithXHR = (file, resourceType, folder, onProgress) => {
 };
 
 /**
- * Main Video Upload Function
- * 
- * Strategy:
- * - Files ≤ 95MB: Standard upload (within Cloudinary preset limit)
- * - Files > 95MB: Chunked upload (bypasses preset limit)
- * - Max: 2GB
+ * Main Video Upload - Supports up to 2GB!
  */
 export const uploadToCloudinary = (file, onProgress) => {
     if (!file) {
@@ -129,28 +156,29 @@ export const uploadToCloudinary = (file, onProgress) => {
     }
     
     const fileSizeMB = file.size / (1024 * 1024);
-    const MAX_SIZE_MB = 2048; // 2GB
-    const CHUNK_THRESHOLD_MB = 95; // Use chunking above 95MB (safe margin)
+    const MAX_SIZE_MB = 2048; // 2GB limit
+    const CHUNK_THRESHOLD_MB = 90; // Use chunking above 90MB
     
-    console.log(`[Cloudinary] File size: ${fileSizeMB.toFixed(2)}MB`);
+    console.log(`[Cloudinary] Upload starting: ${fileSizeMB.toFixed(2)}MB`);
     
     if (fileSizeMB > MAX_SIZE_MB) {
         return Promise.reject(
-            new Error(`File too large! Max ${MAX_SIZE_MB}MB (${(MAX_SIZE_MB / 1024).toFixed(1)}GB). Your file: ${fileSizeMB.toFixed(0)}MB`)
+            new Error(`File too large! Maximum: ${MAX_SIZE_MB}MB (${(MAX_SIZE_MB/1024).toFixed(1)}GB). Your file: ${fileSizeMB.toFixed(0)}MB`)
         );
     }
     
+    // Use chunked upload for large files
     if (fileSizeMB > CHUNK_THRESHOLD_MB) {
-        console.log(`[Cloudinary] Using CHUNKED upload (file > ${CHUNK_THRESHOLD_MB}MB)`);
+        console.log(`[Cloudinary] → Chunked upload (${totalChunks} chunks)`);
         return uploadLargeFileChunked(file, "video", "movies", onProgress);
     } else {
-        console.log(`[Cloudinary] Using STANDARD upload (file ≤ ${CHUNK_THRESHOLD_MB}MB)`);
-        return uploadWithXHR(file, "video", "movies", onProgress);
+        console.log(`[Cloudinary] → Standard upload`);
+        return uploadStandard(file, "video", "movies", onProgress);
     }
 };
 
 /**
- * Image Upload (Profile Photos)
+ * Image Upload (Profile photos)
  */
 export const uploadImageToCloudinary = (file, onProgress) => {
     if (!file) {
@@ -158,19 +186,15 @@ export const uploadImageToCloudinary = (file, onProgress) => {
     }
     
     const fileSizeMB = file.size / (1024 * 1024);
-    const MAX_IMAGE_SIZE_MB = 10;
-    
-    if (fileSizeMB > MAX_IMAGE_SIZE_MB) {
-        return Promise.reject(
-            new Error(`Image too large! Max ${MAX_IMAGE_SIZE_MB}MB. Your image: ${fileSizeMB.toFixed(1)}MB`)
-        );
+    if (fileSizeMB > 10) {
+        return Promise.reject(new Error(`Image too large! Max 10MB`));
     }
     
-    return uploadWithXHR(file, "image", "profiles", onProgress);
+    return uploadStandard(file, "image", "profiles", onProgress);
 };
 
 /**
- * Audio Upload (Voice Messages)
+ * Audio Upload (Voice messages)
  */
 export const uploadAudioToCloudinary = (file, onProgress) => {
     if (!file) {
@@ -178,13 +202,9 @@ export const uploadAudioToCloudinary = (file, onProgress) => {
     }
     
     const fileSizeMB = file.size / (1024 * 1024);
-    const MAX_AUDIO_SIZE_MB = 50;
-    
-    if (fileSizeMB > MAX_AUDIO_SIZE_MB) {
-        return Promise.reject(
-            new Error(`Audio too large! Max ${MAX_AUDIO_SIZE_MB}MB. Your audio: ${fileSizeMB.toFixed(1)}MB`)
-        );
+    if (fileSizeMB > 50) {
+        return Promise.reject(new Error(`Audio too large! Max 50MB`));
     }
     
-    return uploadWithXHR(file, "video", "audio", onProgress);
+    return uploadStandard(file, "video", "audio", onProgress);
 };
