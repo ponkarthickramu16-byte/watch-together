@@ -4,21 +4,62 @@ import { db, auth } from "../firebase";
 import { collection, addDoc, query, where, onSnapshot, orderBy, doc, getDoc, setDoc } from "firebase/firestore";
 import ProfileSetup from "./ProfileSetup";
 import { signOut } from "firebase/auth";
-import { uploadToCloudinary } from "../cloudinary";
 import AdvancedSearch from "../components/AdvancedSearch";
 
 const generateRoomId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
+// ─── YouTube ID Extract ───────────────────────────────────────────────────────
 const getYouTubeId = (url) => {
     if (!url) return null;
     const trimmed = typeof url === "string" ? url.trim() : "";
     if (!trimmed) return null;
-
-    // Support when DB/API stores only the YouTube id (11 chars).
     if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
-
     const match = trimmed.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
     return match ? match[1] : null;
+};
+
+// ─── Google Drive File ID Extract ─────────────────────────────────────────────
+const getDriveFileId = (url) => {
+    if (!url) return null;
+    const trimmed = typeof url === "string" ? url.trim() : "";
+    if (!trimmed) return null;
+
+    // Format 1: https://drive.google.com/file/d/FILE_ID/view
+    // Format 2: https://drive.google.com/file/d/FILE_ID/view?usp=sharing
+    // Format 3: https://drive.google.com/open?id=FILE_ID
+    // Format 4: https://drive.google.com/uc?id=FILE_ID
+    const patterns = [
+        /drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/,
+        /drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/,
+        /drive\.google\.com\/uc\?.*id=([a-zA-Z0-9_-]+)/,
+        /docs\.google\.com\/.*\/d\/([a-zA-Z0-9_-]+)/,
+    ];
+
+    for (const pattern of patterns) {
+        const match = trimmed.match(pattern);
+        if (match) return match[1];
+    }
+    return null;
+};
+
+// ─── Cloudflare Worker proxy URL ─────────────────────────────────────────────
+const DRIVE_PROXY = "https://drive-proxy.ponkarthickramu16.workers.dev";
+
+// ─── Drive link → proxy video URL convert ────────────────────────────────────
+// இந்த URL-ஐ <video src> -ல போட்டா full sync work ஆகும்!
+export const getDriveEmbedUrl = (url) => {
+    const fileId = getDriveFileId(url);
+    if (!fileId) return null;
+    return `${DRIVE_PROXY}?id=${fileId}`;
+};
+
+// ─── Detect link type ─────────────────────────────────────────────────────────
+export const detectLinkType = (url) => {
+    if (!url) return "unknown";
+    if (getYouTubeId(url)) return "youtube";
+    if (getDriveFileId(url)) return "drive";
+    if (url.startsWith("http")) return "direct";
+    return "unknown";
 };
 
 const formatDateTime = (date) => {
@@ -34,6 +75,7 @@ const getMovieTitle = (entry) => {
     const resolvedUrl = entry.movieUrl || entry.videoUrl || entry.movieId || "";
     const ytId = getYouTubeId(resolvedUrl);
     if (ytId) return "YouTube Video";
+    if (getDriveFileId(resolvedUrl)) return "Google Drive Video";
     const filename = resolvedUrl?.split("/").pop()?.split("?")[0] || "Movie";
     return decodeURIComponent(filename).substring(0, 40);
 };
@@ -51,41 +93,36 @@ function Home({ user }) {
     const [historyError, setHistoryError] = useState("");
     const [indexCreateUrl, setIndexCreateUrl] = useState("");
     const [roomType, setRoomType] = useState("couple");
-    // Bug 2 fix: linkLoading-ஐ இங்க declare பண்றோம் — functions-க்கு முன்னாடி.
-    // முன்னாடி line 137-ல handleFileUpload-க்கு பிறகு இருந்தது — Rules of Hooks violation.
     const [linkLoading, setLinkLoading] = useState(false);
-    const [profile, setProfile] = useState(null);      // user's Firestore profile
+    const [profile, setProfile] = useState(null);
     const [profileLoading, setProfileLoading] = useState(true);
     const [showProfileSetup, setShowProfileSetup] = useState(false);
     const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
 
-    // ✅ Bug fix #4 — prevent double-click creating 2 rooms
+    // Link preview state — paste பண்ணும்போது type காட்டும்
+    const [linkPreview, setLinkPreview] = useState(null); // "youtube" | "drive" | "direct" | null
+
     const creatingRef = useRef(false);
 
-    // Load profile from Firestore
+    // Load profile
     useEffect(() => {
         if (!user?.uid) { setProfileLoading(false); return; }
         getDoc(doc(db, "profiles", user.uid)).then(snap => {
             if (snap.exists()) {
                 setProfile(snap.data());
             } else {
-                // No profile yet → show setup
                 setShowProfileSetup(true);
             }
             setProfileLoading(false);
         }).catch(() => setProfileLoading(false));
     }, [user?.uid]);
 
-    // ✅ Bug fix #2 & #3 — show error if history fails, handle null displayName
-    // Bug fix #1 — capture the Firebase-provided index creation URL from the error message
+    // Watch history
     useEffect(() => {
         const uid = user?.uid || null;
         const fallbackName = profile?.name || user?.displayName || user?.email || null;
 
-        if (!uid && !fallbackName) {
-            setHistoryLoading(false);
-            return;
-        }
+        if (!uid && !fallbackName) { setHistoryLoading(false); return; }
 
         setHistoryError("");
         setHistoryLoading(true);
@@ -104,7 +141,6 @@ function Home({ user }) {
             setHistoryLoading(false);
         };
 
-        // Primary: UID-based history (reliable)
         if (uid) {
             const qUid = query(
                 collection(db, "watchHistory"),
@@ -112,104 +148,79 @@ function Home({ user }) {
                 orderBy("watchedAt", "desc")
             );
 
-            const unsub = onSnapshot(
-                qUid,
-                (snap) => {
-                    if (!snap.empty) {
-                        // Got data → stop any fallback listener
-                        fallbackUnsub?.();
-                        fallbackUnsub = null;
-                        setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            const unsub = onSnapshot(qUid, (snap) => {
+                if (!snap.empty) {
+                    fallbackUnsub?.();
+                    fallbackUnsub = null;
+                    setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                    setHistoryLoading(false);
+                    return;
+                }
+                if (fallbackName && !fallbackUnsub) {
+                    const qName = query(
+                        collection(db, "watchHistory"),
+                        where("watchedBy", "==", fallbackName),
+                        orderBy("watchedAt", "desc")
+                    );
+                    fallbackUnsub = onSnapshot(qName, (snap2) => {
+                        setHistory(snap2.docs.map(d => ({ id: d.id, ...d.data() })));
                         setHistoryLoading(false);
-                        return;
-                    }
+                    }, handleErr);
+                } else if (!fallbackName) {
+                    setHistory([]);
+                    setHistoryLoading(false);
+                }
+            }, handleErr);
 
-                    // No UID-based docs (old data). Fallback to name-based query.
-                    if (fallbackName && !fallbackUnsub) {
-                        const qName = query(
-                            collection(db, "watchHistory"),
-                            where("watchedBy", "==", fallbackName),
-                            orderBy("watchedAt", "desc")
-                        );
-                        fallbackUnsub = onSnapshot(
-                            qName,
-                            (snap2) => {
-                                setHistory(snap2.docs.map(d => ({ id: d.id, ...d.data() })));
-                                setHistoryLoading(false);
-                            },
-                            handleErr
-                        );
-                    } else if (!fallbackName) {
-                        setHistory([]);
-                        setHistoryLoading(false);
-                    }
-                },
-                handleErr
-            );
-
-            return () => {
-                fallbackUnsub?.();
-                unsub();
-            };
+            return () => { fallbackUnsub?.(); unsub(); };
         }
 
-        // No uid available → name-based only
         const qNameOnly = query(
             collection(db, "watchHistory"),
             where("watchedBy", "==", fallbackName),
             orderBy("watchedAt", "desc")
         );
-        const unsubNameOnly = onSnapshot(
-            qNameOnly,
-            (snap) => {
-                setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-                setHistoryLoading(false);
-            },
-            handleErr
-        );
+        const unsubNameOnly = onSnapshot(qNameOnly, (snap) => {
+            setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            setHistoryLoading(false);
+        }, handleErr);
         return () => unsubNameOnly();
     }, [user?.uid, user?.displayName, user?.email, profile?.name]);
 
-    // Home.jsx - createRoom function-ல இத செக் பண்ணுங்க
-
+    // ─── Create Room ────────────────────────────────────────────────────────────
     const createRoom = async (inputUrl = "", inputType = "") => {
-        console.log("[Watch Together Home] createRoom called with:", { inputUrl, inputType });
-
         if (!profile || !auth.currentUser) {
-            console.error("[Watch Together Home] Missing profile or auth:", { profile: !!profile, auth: !!auth.currentUser });
             setError("❌ Profile setup பண்ணு or login பண்ணு");
             return;
         }
 
         const trimmedUrl = typeof inputUrl === "string" ? inputUrl.trim() : "";
-        console.log("[Watch Together Home] Trimmed URL:", trimmedUrl);
-
-        if (!trimmedUrl || trimmedUrl.length === 0) {
-            console.error("[Watch Together Home] Empty URL detected");
-            setError("❌ Valid YouTube link அல்லது video URL enter பண்ணு");
+        if (!trimmedUrl) {
+            setError("❌ Valid link enter பண்ணு");
             return;
         }
 
-        const isYouTube = !!getYouTubeId(trimmedUrl);
-        const movieType = inputType || (isYouTube ? "youtube" : "upload");
+        // Drive link-ஆ இருந்தா embed URL-ஆ convert பண்ணு
+        let finalUrl = trimmedUrl;
+        let finalType = inputType;
 
-        console.log("[Watch Together Home] URL analysis:", {
-            isYouTube,
-            movieType,
-            urlLength: trimmedUrl.length,
-            youtubeId: getYouTubeId(trimmedUrl)
-        });
-
-        // Prevent double-creation
-        if (creatingRef.current) {
-            console.warn("[Watch Together Home] Room creation already in progress");
-            return;
+        if (inputType === "drive") {
+            const embedUrl = getDriveEmbedUrl(trimmedUrl);
+            if (!embedUrl) {
+                setError("❌ Invalid Google Drive link. 'Share → Anyone with link' பண்ணி copy பண்ணு.");
+                return;
+            }
+            finalUrl = embedUrl;
+            finalType = "drive";
         }
+
+        if (creatingRef.current) return;
         creatingRef.current = true;
 
         try {
             const roomId = generateRoomId();
-            console.log("[Watch Together Home] Generated room ID:", roomId);
+            const isYouTube = finalType === "youtube";
+            const isDrive   = finalType === "drive";
 
             const newRoom = {
                 roomId,
@@ -220,9 +231,9 @@ function Home({ user }) {
                 createdAt: new Date(),
                 status: "active",
                 roomType,
-                movieUrl: trimmedUrl,
-                movieType,
-                movieTitle: isYouTube ? "YouTube Video" : "Uploaded Video",
+                movieUrl: finalUrl,
+                movieType: finalType,
+                movieTitle: isYouTube ? "YouTube Video" : isDrive ? "Google Drive Video" : "Uploaded Video",
                 isPlaying: false,
                 currentTime: 0,
                 participants: [auth.currentUser.uid],
@@ -231,194 +242,66 @@ function Home({ user }) {
                 callStatus: "idle",
             };
 
-            console.log("[Watch Together Home] Creating room with data:", {
-                roomId: newRoom.roomId,
-                movieUrl: newRoom.movieUrl,
-                movieType: newRoom.movieType,
-                hasMovieUrl: !!newRoom.movieUrl
-            });
-
             await setDoc(doc(db, "rooms", roomId), newRoom);
-            console.log("[Watch Together Home] Room created successfully in Firestore");
-
-            console.log("[Watch Together Home] Navigating to room:", `/room/${roomId}`);
             navigate(`/room/${roomId}`);
 
         } catch (err) {
-            console.error("[Watch Together Home] Room create error:", err);
+            console.error("[Home] Room create error:", err);
             setError("❌ Room create பண்ண முடியல: " + err.message);
-            alert("Room create பண்ண முடியல! Console பாத்து error check பண்ணு.");
         } finally {
             creatingRef.current = false;
         }
     };
-    // Home.jsx - handleFileUpload COMPLETE REPLACEMENT
 
-// Find this function in your Home.jsx (around line 255) and REPLACE it completely:
+    // ─── File Upload (local file — not used for large, just UI kept) ────────────
+    const handleFileUpload = async (file) => {
+        if (!file) return;
+        setError("❌ இப்போ file upload support இல்ல.\n\n💡 Google Drive-ல upload பண்ணி share link paste பண்ணு — 2GB வரை free! 🎬");
+    };
 
-const handleFileUpload = async (file) => {
-    if (!file) return;
-    
-    // Validate video file type
-    const isVideo = file.type.startsWith("video/") || 
-                    file.name.match(/\.(mp4|mkv|avi|mov|webm|m4v|3gp|flv|wmv)$/i);
-    
-    if (!isVideo) {
-        setError("❌ Video file மட்டும் upload பண்ணு (MP4, MKV, MOV, AVI, WEBM...)");
-        return;
-    }
-    
-    // File size validation - 2GB max
-    const maxSizeMB = 2048; // 2GB
-    const fileSizeMB = file.size / (1024 * 1024);
-    
-    console.log(`[Upload] File: ${file.name}`);
-    console.log(`[Upload] Size: ${fileSizeMB.toFixed(2)}MB`);
-    console.log(`[Upload] Type: ${file.type}`);
-    
-    if (fileSizeMB > maxSizeMB) {
-        setError(
-            `❌ File too big! Maximum ${maxSizeMB}MB (${(maxSizeMB / 1024).toFixed(1)}GB). Your file: ${fileSizeMB.toFixed(0)}MB.
-            
-💡 Options:
-• Compress video using HandBrake or FFmpeg
-• Upload to YouTube and share the link
-• Split into smaller parts`
-        );
-        return;
-    }
-    
-    // Show info about upload method
-    if (fileSizeMB > 95) {
-        console.log(`[Upload] Large file detected (${fileSizeMB.toFixed(0)}MB) - Will use chunked upload`);
-    } else {
-        console.log(`[Upload] Standard upload for ${fileSizeMB.toFixed(0)}MB file`);
-    }
-    
-    setError("");
-    setUploading(true);
-    setUploadProgress(0);
-    
-    try {
-        console.log(`[Upload] Starting upload...`);
-        
-        // Upload with progress tracking
-        const url = await uploadToCloudinary(file, (progress) => {
-            setUploadProgress(progress);
-            
-            // Log milestones
-            if (progress === 25 || progress === 50 || progress === 75 || progress === 100) {
-                console.log(`[Upload] Progress: ${progress}%`);
-            }
-        });
-        
-        console.log(`[Upload] ✅ Success! Cloudinary URL: ${url}`);
-        
-        // Create room with uploaded video
-        await createRoom(url, "upload");
-        
-    } catch (err) {
-        console.error("[Upload] ❌ Error:", err);
-        
-        // User-friendly error messages
-        let errorMessage = "Upload failed: ";
-        
-        if (err.message.includes("Network error")) {
-            errorMessage += "Check your internet connection and try again.";
-        } else if (err.message.includes("File size too large")) {
-            errorMessage += "File exceeds Cloudinary limits. Try compressing or use YouTube.";
-        } else if (err.message.includes("chunk")) {
-            errorMessage += "Upload interrupted. Please try again.";
-        } else if (err.message.includes("upgrade your plan")) {
-            errorMessage += "Cloudinary account limit reached. Upgrade plan or use smaller files.";
-        } else {
-            errorMessage += err.message;
-        }
-        
-        setError(`❌ ${errorMessage}`);
-        
-    } finally {
-        setUploading(false);
-        setUploadProgress(0);
-        creatingRef.current = false;
-    }
-};
+    const handleFileChange = (e) => {
+        const f = e.target.files[0];
+        if (f) handleFileUpload(f);
+        e.target.value = "";
+    };
+    const handleDrop = (e) => {
+        e.preventDefault();
+        setDragOver(false);
+        const f = e.dataTransfer.files[0];
+        if (f) handleFileUpload(f);
+    };
 
+    // ─── URL input change — live preview ─────────────────────────────────────
+    const handleUrlChange = (e) => {
+        const val = e.target.value;
+        setMovieUrl(val);
+        setError("");
+        if (!val.trim()) { setLinkPreview(null); return; }
+        const type = detectLinkType(val.trim());
+        setLinkPreview(type === "unknown" ? null : type);
+    };
 
-// Also UPDATE the UI text in upload area (around line 350-400):
-// Find the upload area div and update the size text:
-
-{uploading ? (
-    <div style={S.progressContainer}>
-        <div style={{ fontSize: "48px", marginBottom: "12px" }}>⏳</div>
-        <p style={{ color: "white", fontSize: "16px", fontWeight: "bold", margin: "0 0 8px 0" }}>
-            Uploading... {uploadProgress}%
-        </p>
-        <div style={S.progressBar}>
-            <div style={{ ...S.progressFill, width: `${uploadProgress}%` }} />
-        </div>
-        <p style={{ color: "#666", fontSize: "12px", margin: "12px 0 0 0" }}>
-            {uploadProgress < 30 && "Starting upload..."}
-            {uploadProgress >= 30 && uploadProgress < 70 && "Upload in progress, please wait..."}
-            {uploadProgress >= 70 && uploadProgress < 100 && "Almost done!"}
-            {uploadProgress === 100 && "Processing... Creating room..."}
-        </p>
-    </div>
-) : (
-    <div
-        style={{
-            ...S.uploadArea,
-            borderColor: dragOver ? "#ff6b35" : "#333",
-            backgroundColor: dragOver ? "rgba(255,107,53,0.1)" : "transparent"
-        }}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={handleDrop}
-    >
-        <div style={{ fontSize: "48px", marginBottom: "12px" }}>📁</div>
-        <p style={{ color: "white", fontSize: "16px", fontWeight: "bold", margin: "0 0 8px 0" }}>
-            Drag & drop video file here
-        </p>
-        <p style={{ color: "#666", fontSize: "13px", margin: "0 0 16px 0" }}>
-            or click to select from your device
-        </p>
-        <p style={{ color: "#888", fontSize: "11px", margin: "0 0 12px 0" }}>
-            ✅ Supported: MP4, MKV, AVI, MOV, WEBM, M4V
-        </p>
-        <p style={{ color: "#ff6b35", fontSize: "13px", fontWeight: "bold", margin: "0 0 6px 0" }}>
-            📦 Maximum Size: 2GB (2048MB)
-        </p>
-        <p style={{ color: "#666", fontSize: "10px", margin: 0 }}>
-            💡 Large files (&gt;100MB) use smart chunked upload
-        </p>
-        <input
-            type="file"
-            accept="video/*"
-            onChange={handleFileChange}
-            style={{ display: "none" }}
-            ref={(input) => {
-                if (input) {
-                    input.onclick = (e) => e.target.value = "";
-                }
-            }}
-        />
-    </div>
-)}
-
-
-    const handleFileChange = (e) => { const f = e.target.files[0]; if (f) handleFileUpload(f); e.target.value = ""; };
-    const handleDrop = (e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFileUpload(f); };
-
+    // ─── Go button — YouTube / Drive / Direct ────────────────────────────────
     const handleYouTubeOrLink = async () => {
         if (linkLoading || creatingRef.current) return;
         const url = movieUrl.trim();
         if (!url) { setError("❌ Link enter பண்ணு"); return; }
-        setError(""); setLinkLoading(true);
+
+        setError("");
+        setLinkLoading(true);
+
         try {
-            const ytId = getYouTubeId(url);
-            if (ytId) await createRoom(url, "youtube");
-            else if (url.startsWith("http")) await createRoom(url, "upload");
-            else setError("❌ Valid YouTube link அல்லது video URL enter பண்ணு");
+            const type = detectLinkType(url);
+
+            if (type === "youtube") {
+                await createRoom(url, "youtube");
+            } else if (type === "drive") {
+                await createRoom(url, "drive");
+            } else if (type === "direct") {
+                await createRoom(url, "upload");
+            } else {
+                setError("❌ Valid YouTube link அல்லது Google Drive link enter பண்ணு");
+            }
         } finally {
             setLinkLoading(false);
             creatingRef.current = false;
@@ -437,7 +320,6 @@ const handleFileUpload = async (file) => {
 
     const isCouple = roomType === "couple";
 
-    // Show profile setup if needed
     if (showProfileSetup || (!profileLoading && !profile)) {
         return (
             <ProfileSetup
@@ -469,7 +351,7 @@ const handleFileUpload = async (file) => {
 
             {/* Profile Card */}
             {profile && (
-                <div style={{ margin: "0 16px 16px", backgroundColor: "#1a1a1a", borderRadius: "16px", border: "1px solid #333", padding: "16px", display: "flex", alignItems: "center", gap: "14px" }}>
+                <div style={{ width: "100%", maxWidth: "560px", margin: "0 0 16px 0", backgroundColor: "#1a1a1a", borderRadius: "16px", border: "1px solid #333", padding: "16px", display: "flex", alignItems: "center", gap: "14px" }}>
                     <div style={{ width: "60px", height: "60px", borderRadius: "50%", border: "3px solid #ff6b35", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "#2a2a2a", flexShrink: 0 }}>
                         {profile.photoUrl
                             ? <img src={profile.photoUrl} alt="profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
@@ -500,14 +382,12 @@ const handleFileUpload = async (file) => {
                 </div>
             )}
 
-            {/* Main Tabs */}
+            {/* Tabs */}
             <div style={S.tabs}>
-                <button onClick={() => setActiveTab("create")}
-                    style={{ ...S.tab, ...(activeTab === "create" ? S.tabActive : {}) }}>
+                <button onClick={() => setActiveTab("create")} style={{ ...S.tab, ...(activeTab === "create" ? S.tabActive : {}) }}>
                     ➕ New Room
                 </button>
-                <button onClick={() => setActiveTab("history")}
-                    style={{ ...S.tab, ...(activeTab === "history" ? S.tabActive : {}) }}>
+                <button onClick={() => setActiveTab("history")} style={{ ...S.tab, ...(activeTab === "history" ? S.tabActive : {}) }}>
                     📜 Watch History
                     {history.length > 0 && <span style={S.badge}>{history.length}</span>}
                 </button>
@@ -516,13 +396,10 @@ const handleFileUpload = async (file) => {
             {/* ===== CREATE ROOM ===== */}
             {activeTab === "create" && (
                 <div style={S.card}>
-                    {/* Room Type Selector */}
+                    {/* Room Type */}
                     <div style={{ marginBottom: "24px" }}>
-                        <p style={{ color: "#aaa", fontSize: "13px", textAlign: "center", margin: "0 0 12px 0" }}>
-                            எந்த மாதிரி room வேணும்?
-                        </p>
+                        <p style={{ color: "#aaa", fontSize: "13px", textAlign: "center", margin: "0 0 12px 0" }}>எந்த மாதிரி room வேணும்?</p>
                         <div style={{ display: "flex", gap: "10px" }}>
-                            {/* Couple */}
                             <button onClick={() => setRoomType("couple")} style={{
                                 flex: 1, padding: "16px 12px",
                                 backgroundColor: isCouple ? "rgba(255,107,53,0.12)" : "#111",
@@ -532,12 +409,9 @@ const handleFileUpload = async (file) => {
                                 <div style={{ fontSize: "32px", marginBottom: "6px" }}>💕</div>
                                 <p style={{ color: isCouple ? "#ff6b35" : "white", fontSize: "15px", fontWeight: "bold", margin: "0 0 4px 0" }}>Couple Room</p>
                                 <p style={{ color: isCouple ? "#ff8c5a" : "#555", fontSize: "12px", margin: 0 }}>2 பேர் மட்டும் • Private 🔒</p>
-                                {isCouple && (
-                                    <div style={{ marginTop: "8px", backgroundColor: "#ff6b35", color: "white", borderRadius: "20px", padding: "2px 10px", fontSize: "11px", fontWeight: "bold", display: "inline-block" }}>✓ Selected</div>
-                                )}
+                                {isCouple && <div style={{ marginTop: "8px", backgroundColor: "#ff6b35", color: "white", borderRadius: "20px", padding: "2px 10px", fontSize: "11px", fontWeight: "bold", display: "inline-block" }}>✓ Selected</div>}
                             </button>
 
-                            {/* Group */}
                             <button onClick={() => setRoomType("group")} style={{
                                 flex: 1, padding: "16px 12px",
                                 backgroundColor: !isCouple ? "rgba(52,152,219,0.12)" : "#111",
@@ -547,90 +421,90 @@ const handleFileUpload = async (file) => {
                                 <div style={{ fontSize: "32px", marginBottom: "6px" }}>👯</div>
                                 <p style={{ color: !isCouple ? "#3498db" : "white", fontSize: "15px", fontWeight: "bold", margin: "0 0 4px 0" }}>Group Room</p>
                                 <p style={{ color: !isCouple ? "#5dade2" : "#555", fontSize: "12px", margin: 0 }}>4+ பேர் • Friends 🎉</p>
-                                {!isCouple && (
-                                    <div style={{ marginTop: "8px", backgroundColor: "#3498db", color: "white", borderRadius: "20px", padding: "2px 10px", fontSize: "11px", fontWeight: "bold", display: "inline-block" }}>✓ Selected</div>
-                                )}
+                                {!isCouple && <div style={{ marginTop: "8px", backgroundColor: "#3498db", color: "white", borderRadius: "20px", padding: "2px 10px", fontSize: "11px", fontWeight: "bold", display: "inline-block" }}>✓ Selected</div>}
                             </button>
                         </div>
 
                         <div style={{ marginTop: "10px", backgroundColor: isCouple ? "rgba(255,107,53,0.07)" : "rgba(52,152,219,0.07)", borderRadius: "10px", padding: "10px 14px", border: `1px solid ${isCouple ? "rgba(255,107,53,0.2)" : "rgba(52,152,219,0.2)"}` }}>
-                            {isCouple ? (
-                                <p style={{ color: "#aaa", fontSize: "12px", margin: 0 }}>💕 <strong style={{ color: "#ff6b35" }}>Couple Room:</strong> நீயும் உன் partner-உம் மட்டும். 3rd person join ஆக முடியாது. Super private! 🔐</p>
-                            ) : (
-                                <p style={{ color: "#aaa", fontSize: "12px", margin: 0 }}>👯 <strong style={{ color: "#3498db" }}>Group Room:</strong> Friends எல்லாரும் join ஆகலாம். Link share பண்ணு, கூட்டமா பாரு! 🎊</p>
-                            )}
+                            {isCouple
+                                ? <p style={{ color: "#aaa", fontSize: "12px", margin: 0 }}>💕 <strong style={{ color: "#ff6b35" }}>Couple Room:</strong> நீயும் உன் partner-உம் மட்டும். 3rd person join ஆக முடியாது. Super private! 🔐</p>
+                                : <p style={{ color: "#aaa", fontSize: "12px", margin: 0 }}>👯 <strong style={{ color: "#3498db" }}>Group Room:</strong> Friends எல்லாரும் join ஆகலாம். Link share பண்ணு, கூட்டமா பாரு! 🎊</p>
+                            }
                         </div>
                     </div>
 
                     <h1 style={S.title}>{isCouple ? "💕 Partner-கூட movie பாரு" : "👯 Friends-கூட movie பாரு"}</h1>
-                    <p style={S.subtitle}>Movie upload பண்ணு அல்லது YouTube link போடு</p>
+                    <p style={S.subtitle}>Google Drive / YouTube link paste பண்ணு</p>
 
-                    {/* Upload area */}
-                    {!uploading ? (
-                        <label htmlFor="fileInput"
-                            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                            onDragLeave={() => setDragOver(false)}
-                            onDrop={handleDrop}
-                            style={{
-                                ...S.uploadArea,
-                                borderColor: dragOver ? (isCouple ? "#ff6b35" : "#3498db") : "#333",
-                                backgroundColor: dragOver ? (isCouple ? "rgba(255,107,53,0.08)" : "rgba(52,152,219,0.08)") : "#111",
-                                display: "block", cursor: "pointer",
-                            }}>
-                            <div style={{ fontSize: "48px", marginBottom: "12px" }}>📁</div>
-                            <p style={{ color: "white", fontSize: "16px", fontWeight: "bold", margin: "0 0 8px 0" }}>
-                                Drag & drop video file இங்க
-                            </p>
-                            <p style={{ color: "#666", fontSize: "13px", margin: "0 0 16px 0" }}>
-                                அல்லது click பண்ணி select பண்ணு
-                            </p>
-                            <p style={{ color: "#888", fontSize: "11px", margin: "0 0 12px 0" }}>
-                                ✅ Support: MP4, MKV, AVI, MOV, WEBM, M4V
-                            </p>
-                            <p style={{ color: "#ff6b35", fontSize: "12px", fontWeight: "bold", margin: 0 }}>
-                                📦 Max Size: 2GB (2048MB) {/* UPDATED */}
-                            </p>
-                            <p style={{ color: "#666", fontSize: "10px", margin: "4px 0 0 0" }}>
-                                💡 Large files (&gt;100MB) use smart chunked upload
-                            </p>
-                            <input id="fileInput" type="file" accept="video/*" onChange={handleFileChange} style={{ display: "none" }} />
-                        </label>
-                    ) : (
-                        <div style={S.progressContainer}>
-                            <div style={{ fontSize: "32px", marginBottom: "12px" }}>⬆️</div>
-                            <p style={{ color: "white", fontSize: "16px", margin: "0 0 16px 0" }}>Upload ஆகுது... {uploadProgress}%</p>
-                            <div style={S.progressBar}><div style={{ ...S.progressFill, width: `${uploadProgress}%` }} /></div>
-                            <p style={{ color: "#555", fontSize: "12px", marginTop: "8px" }}>
-                                {uploadProgress < 50 ? "Upload ஆகுது, wait பண்ணு..." : uploadProgress < 90 ? "கிட்டத்தட்ட ஆச்சு..." : "Ready ஆகுது..."}
-                            </p>
+                    {/* ── Google Drive Guide Box ── */}
+                    <div style={{ backgroundColor: "#0d1f0d", border: "1px solid #1a4a1a", borderRadius: "14px", padding: "16px", marginBottom: "20px" }}>
+                        <p style={{ color: "#4caf50", fontSize: "13px", fontWeight: "bold", margin: "0 0 10px 0" }}>📁 Google Drive-ல movie share பண்றது எப்படி?</p>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                            {[
+                                { n: "1", t: "drive.google.com போய் movie upload பண்ணு (2GB வரை free!)" },
+                                { n: "2", t: "File-ஐ right click → 'Share' click பண்ணு" },
+                                { n: "3", t: "'Anyone with the link' select பண்ணு → 'Copy link' click" },
+                                { n: "4", t: "அந்த link-ஐ கீழே paste பண்ணி Go! 🚀" },
+                            ].map(s => (
+                                <div key={s.n} style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                                    <div style={{ width: "20px", height: "20px", borderRadius: "50%", backgroundColor: "#1a4a1a", color: "#4caf50", fontSize: "11px", fontWeight: "bold", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: "1px" }}>{s.n}</div>
+                                    <p style={{ color: "#aaa", fontSize: "12px", margin: 0, lineHeight: "1.4" }}>{s.t}</p>
+                                </div>
+                            ))}
                         </div>
-                    )}
-
-                    <div style={S.divider}>
-                        <div style={S.dividerLine} /><span style={S.dividerText}>அல்லது</span><div style={S.dividerLine} />
                     </div>
 
+                    {/* ── URL Input ── */}
                     <div style={{ marginBottom: "16px" }}>
-                        <p style={{ color: "#aaa", fontSize: "14px", margin: "0 0 10px 0" }}>🔗 YouTube link அல்லது Direct video URL</p>
+                        <p style={{ color: "#aaa", fontSize: "14px", margin: "0 0 10px 0" }}>
+                            🔗 Google Drive link அல்லது YouTube link
+                        </p>
                         <div style={{ display: "flex", gap: "8px" }}>
-                            <input type="url" placeholder="https://youtube.com/watch?v=..." value={movieUrl}
-                                onChange={(e) => { setMovieUrl(e.target.value); setError(""); }}
+                            <input
+                                type="url"
+                                placeholder="https://drive.google.com/file/d/... அல்லது YouTube URL"
+                                value={movieUrl}
+                                onChange={handleUrlChange}
                                 onKeyDown={(e) => e.key === "Enter" && handleYouTubeOrLink()}
-                                style={S.urlInput} />
-                            {/* ✅ Bug fix #4 — disabled during loading */}
-                            <button onClick={handleYouTubeOrLink} disabled={linkLoading || uploading}
+                                style={S.urlInput}
+                            />
+                            <button
+                                onClick={handleYouTubeOrLink}
+                                disabled={linkLoading || uploading}
                                 style={{ ...S.goBtn, backgroundColor: linkLoading ? "#555" : isCouple ? "#ff6b35" : "#3498db", cursor: linkLoading ? "not-allowed" : "pointer" }}>
                                 {linkLoading ? "⏳" : "▶ Go"}
                             </button>
                         </div>
+
+                        {/* Live link preview badge */}
+                        {linkPreview && (
+                            <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "6px" }}>
+                                {linkPreview === "youtube" && (
+                                    <span style={{ backgroundColor: "rgba(231,76,60,0.15)", color: "#e74c3c", border: "1px solid rgba(231,76,60,0.3)", borderRadius: "20px", padding: "3px 10px", fontSize: "12px", fontWeight: "bold" }}>
+                                        ✅ YouTube link detected
+                                    </span>
+                                )}
+                                {linkPreview === "drive" && (
+                                    <span style={{ backgroundColor: "rgba(76,175,80,0.15)", color: "#4caf50", border: "1px solid rgba(76,175,80,0.3)", borderRadius: "20px", padding: "3px 10px", fontSize: "12px", fontWeight: "bold" }}>
+                                        ✅ Google Drive link detected
+                                    </span>
+                                )}
+                                {linkPreview === "direct" && (
+                                    <span style={{ backgroundColor: "rgba(52,152,219,0.15)", color: "#3498db", border: "1px solid rgba(52,152,219,0.3)", borderRadius: "20px", padding: "3px 10px", fontSize: "12px", fontWeight: "bold" }}>
+                                        ✅ Direct video link detected
+                                    </span>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {error && <div style={S.errorBox}><p style={{ margin: 0, fontSize: "13px", whiteSpace: "pre-line" }}>{error}</p></div>}
 
+                    {/* Info Box */}
                     <div style={S.infoBox}>
                         <p style={{ color: "#555", fontSize: "12px", margin: "0 0 4px 0" }}>💡 <strong style={{ color: "#666" }}>Tips:</strong></p>
-                        <p style={{ color: "#555", fontSize: "12px", margin: "0 0 3px 0" }}>• YouTube link best - fast & unlimited ✅</p>
-                        <p style={{ color: "#555", fontSize: "12px", margin: "0 0 3px 0" }}>• File upload max 100MB (personal videos மட்டும்)</p>
+                        <p style={{ color: "#555", fontSize: "12px", margin: "0 0 3px 0" }}>• Google Drive — 2GB வரை free ✅ (Recommended!)</p>
+                        <p style={{ color: "#555", fontSize: "12px", margin: "0 0 3px 0" }}>• YouTube link — fast & unlimited ✅</p>
                         <p style={{ color: "#555", fontSize: "12px", margin: 0 }}>
                             {isCouple ? "• Couple Room - 2 பேர் மட்டும் join ஆகலாம் 🔒" : "• Group Room - எத்தனை பேர் வேணும்னாலும் join ஆகலாம் 🎉"}
                         </p>
@@ -645,38 +519,23 @@ const handleFileUpload = async (file) => {
                         <h2 style={{ color: "white", fontSize: "20px", margin: 0 }}>📜 Watch History</h2>
                         <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
                             <span style={{ color: "#555", fontSize: "13px" }}>மொத்தம் {history.length} movies</span>
-                            <button
-                                onClick={() => setShowAdvancedSearch(true)}
-                                style={{
-                                    padding: "8px 16px",
-                                    backgroundColor: "#3498db",
-                                    color: "white",
-                                    border: "none",
-                                    borderRadius: "8px",
-                                    cursor: "pointer",
-                                    fontSize: "13px",
-                                    fontWeight: "bold"
-                                }}
-                            >
+                            <button onClick={() => setShowAdvancedSearch(true)}
+                                style={{ padding: "8px 16px", backgroundColor: "#3498db", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px", fontWeight: "bold" }}>
                                 🔍 Advanced Search
                             </button>
                         </div>
                     </div>
 
-                    {/* ✅ Bug fix #2 — show index error with fix link */}
                     {historyError === "index" && (
                         <div style={{ backgroundColor: "rgba(243,156,18,0.15)", border: "1px solid rgba(243,156,18,0.3)", borderRadius: "10px", padding: "14px", marginBottom: "16px" }}>
                             <p style={{ color: "#f39c12", fontSize: "13px", margin: "0 0 8px 0", fontWeight: "bold" }}>⚠️ Firestore Composite Index வேணும்!</p>
                             <p style={{ color: "#aaa", fontSize: "12px", margin: "0 0 10px 0" }}>
                                 <code style={{ backgroundColor: "rgba(0,0,0,0.3)", padding: "2px 6px", borderRadius: "4px", fontSize: "11px" }}>watchedBy (Asc) + watchedAt (Desc)</code> index create ஆகல.
-                                கீழே உள்ள link-ல click பண்ணி Firebase automatically create பண்ணும்:
                             </p>
-                            <a href={indexCreateUrl}
-                                target="_blank" rel="noreferrer"
+                            <a href={indexCreateUrl} target="_blank" rel="noreferrer"
                                 style={{ display: "inline-block", color: "white", fontSize: "12px", fontWeight: "bold", backgroundColor: "#f39c12", padding: "6px 14px", borderRadius: "8px", textDecoration: "none" }}>
                                 🔗 Create Index in Firebase Console →
                             </a>
-                            <p style={{ color: "#666", fontSize: "11px", margin: "8px 0 0 0" }}>Link click பண்ணி "Create index" button press பண்ணு. சில minutes-ல ready ஆகும்.</p>
                         </div>
                     )}
 
@@ -717,9 +576,11 @@ const handleFileUpload = async (file) => {
                             </div>
 
                             {items.map((item) => {
-                                const ytId = getYouTubeId(item.movieUrl || "");
-                                const title = getMovieTitle(item);
-                                const isYT = item.movieType === "youtube" || !!ytId;
+                                const ytId    = getYouTubeId(item.movieUrl || "");
+                                const driveId = getDriveFileId(item.movieUrl || "");
+                                const title   = getMovieTitle(item);
+                                const isYT    = item.movieType === "youtube" || !!ytId;
+                                const isDrive = item.movieType === "drive" || !!driveId;
                                 const isCoupleRoom = item.roomType === "couple" || !item.roomType;
 
                                 return (
@@ -732,10 +593,12 @@ const handleFileUpload = async (file) => {
                                                         onError={(e) => { e.target.parentElement.innerHTML = '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:24px">▶️</div>'; }} />
                                                 </div>
                                             ) : (
-                                                <div style={{ width: "80px", height: "56px", borderRadius: "8px", backgroundColor: "#2a2a2a", border: "1px solid #333", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px" }}>🎞️</div>
+                                                <div style={{ width: "80px", height: "56px", borderRadius: "8px", backgroundColor: "#2a2a2a", border: "1px solid #333", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px" }}>
+                                                    {isDrive ? "📁" : "🎞️"}
+                                                </div>
                                             )}
-                                            <span style={{ position: "absolute", bottom: "3px", right: "3px", fontSize: "9px", fontWeight: "bold", backgroundColor: isYT ? "#e74c3c" : "#2980b9", color: "white", padding: "1px 5px", borderRadius: "4px" }}>
-                                                {isYT ? "YT" : "FILE"}
+                                            <span style={{ position: "absolute", bottom: "3px", right: "3px", fontSize: "9px", fontWeight: "bold", backgroundColor: isYT ? "#e74c3c" : isDrive ? "#4caf50" : "#2980b9", color: "white", padding: "1px 5px", borderRadius: "4px" }}>
+                                                {isYT ? "YT" : isDrive ? "GD" : "FILE"}
                                             </span>
                                         </div>
 
@@ -768,20 +631,15 @@ const handleFileUpload = async (file) => {
             )}
 
             <style>{`@keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }`}</style>
+
             {showAdvancedSearch && (
                 <AdvancedSearch
                     user={user}
                     onClose={() => setShowAdvancedSearch(false)}
                     T={{
-                        bg: "#0f0f0f",
-                        card: "#1a1a1a",
-                        card2: "#2a2a2a",
-                        border: "#333",
-                        text: "white",
-                        text2: "#aaa",
-                        text3: "#666",
-                        primary: "#ff6b35",
-                        secondary: "#3498db",
+                        bg: "#0f0f0f", card: "#1a1a1a", card2: "#2a2a2a", border: "#333",
+                        text: "white", text2: "#aaa", text3: "#666",
+                        primary: "#ff6b35", secondary: "#3498db",
                     }}
                 />
             )}
@@ -803,10 +661,6 @@ const S = {
     card: { width: "100%", maxWidth: "560px", backgroundColor: "#1a1a1a", borderRadius: "20px", padding: "28px", border: "1px solid #222" },
     title: { color: "white", fontSize: "20px", margin: "0 0 6px 0", textAlign: "center", fontWeight: "bold" },
     subtitle: { color: "#666", fontSize: "14px", margin: "0 0 20px 0", textAlign: "center" },
-    uploadArea: { border: "2px dashed #333", borderRadius: "14px", padding: "28px 20px", textAlign: "center", transition: "all 0.2s" },
-    progressContainer: { border: "2px solid #ff6b35", borderRadius: "14px", padding: "28px 20px", textAlign: "center", backgroundColor: "rgba(255,107,53,0.05)" },
-    progressBar: { width: "100%", height: "8px", backgroundColor: "#333", borderRadius: "4px", overflow: "hidden" },
-    progressFill: { height: "100%", backgroundColor: "#ff6b35", borderRadius: "4px", transition: "width 0.3s ease" },
     divider: { display: "flex", alignItems: "center", gap: "12px", margin: "20px 0" },
     dividerLine: { flex: 1, height: "1px", backgroundColor: "#2a2a2a" },
     dividerText: { color: "#444", fontSize: "13px" },

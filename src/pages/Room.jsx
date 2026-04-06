@@ -54,7 +54,28 @@ const normalizeMovieUrl = (data) => {
 
 const getMovieType = (data, movieUrl = "") => {
     if (data?.movieType) return data.movieType;
-    return getYouTubeId(movieUrl) ? "youtube" : "upload";
+    if (getYouTubeId(movieUrl)) return "youtube";
+    if (getDriveFileId(movieUrl)) return "drive";
+    return "upload";
+};
+
+// ─── Google Drive File ID Extract ────────────────────────────────────────────
+const getDriveFileId = (url) => {
+    if (!url) return null;
+    const trimmed = typeof url === "string" ? url.trim() : "";
+    if (!trimmed) return null;
+    const patterns = [
+        /drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/,
+        /drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/,
+        /drive\.google\.com\/uc\?.*id=([a-zA-Z0-9_-]+)/,
+        // Proxy URL detect: https://drive-proxy.xxx.workers.dev?id=FILE_ID
+        /workers\.dev\?id=([a-zA-Z0-9_-]+)/,
+    ];
+    for (const pattern of patterns) {
+        const match = trimmed.match(pattern);
+        if (match) return match[1];
+    }
+    return null;
 };
 
 // ─── Bug 6 fix: Environment variable guard ────────────────────────────────────
@@ -63,8 +84,6 @@ const getMovieType = (data, movieUrl = "") => {
 // console AND in the UI instead of a blank white-screen crash.
 const REQUIRED_ENV = {
     VITE_LIVEKIT_URL: import.meta.env.VITE_LIVEKIT_URL,
-    VITE_CLOUDINARY_CLOUD_NAME: import.meta.env.VITE_CLOUDINARY_CLOUD_NAME,
-    VITE_CLOUDINARY_UPLOAD_PRESET: import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET,
 };
 const MISSING_ENV = Object.entries(REQUIRED_ENV)
     .filter(([, v]) => !v)
@@ -1309,6 +1328,7 @@ function Room() {
     const movieType = roomData?.movieType || getMovieType(roomData, movieUrl);
     const youtubeId = getYouTubeId(movieUrl);
     const isYouTubeVideo = movieType === "youtube" || !!youtubeId;
+    const isDriveVideo = movieType === "drive" || (!isYouTubeVideo && movieUrl.includes("drive.google.com"));
     const hasMovieUrl = !!movieUrl;
 
     return (
@@ -1441,6 +1461,20 @@ function Room() {
                                             </button>
                                         </div>
                                     </div>
+                                ) : isDriveVideo ? (
+                                    // ── Google Drive → Cloudflare Proxy → <video> full sync ──
+                                    <video
+                                        ref={videoRef}
+                                        src={movieUrl}
+                                        controls
+                                        playsInline
+                                        style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
+                                        onPlay={() => { if (joinedRef.current) updatePlayState(true, videoRef.current?.currentTime); }}
+                                        onPause={() => { if (joinedRef.current) updatePlayState(false, videoRef.current?.currentTime); }}
+                                        onTimeUpdate={(e) => setCurrentVideoTime(e.target.currentTime)}
+                                        onSeeked={handleSeek}
+                                        onError={() => showToast("Drive video load ஆகல! Share settings 'Anyone with link' ஆ இருக்கா check பண்ணு.", "❌", "#e74c3c")}
+                                    />
                                 ) : hasMovieUrl ? (
                                     <video
                                         ref={videoRef}
