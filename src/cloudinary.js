@@ -169,10 +169,10 @@ export const uploadToCloudinary = (file, onProgress) => {
     
     // Use chunked upload for large files
     if (fileSizeMB > CHUNK_THRESHOLD_MB) {
-        console.log(`[Cloudinary] → Chunked upload (${totalChunks} chunks)`);
+        console.log(`[Cloudinary] → Using chunked upload for large file`);
         return uploadLargeFileChunked(file, "video", "movies", onProgress);
     } else {
-        console.log(`[Cloudinary] → Standard upload`);
+        console.log(`[Cloudinary] → Using standard upload`);
         return uploadStandard(file, "video", "movies", onProgress);
     }
 };
