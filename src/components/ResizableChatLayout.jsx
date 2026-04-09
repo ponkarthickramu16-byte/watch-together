@@ -23,6 +23,7 @@ export function ResizableChatLayout({
     minVideoHeight = 200, // Minimum video height in pixels
     minChatHeight = 150,  // Minimum chat height in pixels
     onSplitChange,  // Callback when split ratio changes
+    onChatVisibilityChange, // Callback when chat panel visibility changes
     T  // Theme colors
 }) {
     const [splitRatio, setSplitRatio] = useState(() => {
@@ -45,6 +46,13 @@ export function ResizableChatLayout({
             onSplitChange(splitRatio);
         }
     }, [splitRatio, onSplitChange]);
+
+    // Inform parent when chat visibility changes (for unread/toast logic)
+    useEffect(() => {
+        if (onChatVisibilityChange) {
+            onChatVisibilityChange(showChat);
+        }
+    }, [showChat, onChatVisibilityChange]);
 
     // Handle drag start
     const handleDragStart = (e) => {

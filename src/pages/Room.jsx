@@ -436,6 +436,8 @@ function Room() {
     const showChatRef = useRef(false); // must match showChat useState(false) initial value
     const reactionTimers = useRef([]); // cleanup floating reaction timeouts on unmount
     const lastReactionTimeRef = useRef({}); // per-emoji debounce — flood prevention
+    const lastNotifiedMessageIdRef = useRef(null); // prevent duplicate hidden-chat toasts
+    const videoRetryRef = useRef(false); // retry uploaded video once with cache-buster
 
     // FIX 1: YouTube refs defined early - before any useEffect
     // pendingYtCmdRef is now a QUEUE (array) — multiple commands before player ready
@@ -487,6 +489,13 @@ function Room() {
         _decryptCache.clear();            // stale ciphertext must not survive room change
         _keyCache.clear();                // derived keys are room-specific — clear on change
         prevMovieUrlRef.current = null;
+        prevParticipantsRef.current = [];
+        participantsInitializedRef.current = false;
+        prevOnlineRef.current = [];
+        setOnlineUsers([]);
+        setUnreadCount(0);
+        lastNotifiedMessageIdRef.current = null;
+        videoRetryRef.current = false;
     }, [roomId]);
     
     useEffect(() => {
@@ -893,11 +902,21 @@ function Room() {
             if (!showChatRef.current) {
                 const myUnread = decrypted.filter(m => m.username !== usernameRef.current && !(m.readBy || []).includes(usernameRef.current));
                 setUnreadCount(myUnread.length);
+                const latestFromOthers = [...decrypted].reverse().find(
+                    (m) => m.username !== usernameRef.current
+                );
+                if (latestFromOthers && latestFromOthers.id !== lastNotifiedMessageIdRef.current) {
+                    lastNotifiedMessageIdRef.current = latestFromOthers.id;
+                    const sender = latestFromOthers.username || "Partner";
+                    showToast(`${sender} room chat-ல message அனுப்பிருக்காங்க 💬`, "💬", "#2980b9");
+                }
             } else {
                 setUnreadCount(0);
+                const latestId = decrypted.length ? decrypted[decrypted.length - 1].id : null;
+                lastNotifiedMessageIdRef.current = latestId;
             }
         });
-    }, [roomId, markMessagesRead]);
+    }, [roomId, markMessagesRead, showToast]);
 
     // Reactions flood fix: page load timestamp store பண்றோம்.
     // இதுக்கு முன்னாடி Firestore-ல இருந்த reactions page reload-ல
@@ -1397,6 +1416,7 @@ function Room() {
                         defaultSplit={60}
                         minVideoHeight={300}
                         minChatHeight={200}
+                        onChatVisibilityChange={setShowChat}
                         videoContent={
                             <div
                                 ref={playerContainerRef}
@@ -1486,6 +1506,22 @@ function Room() {
                                         onPause={() => { if (joinedRef.current) updatePlayState(false, videoRef.current?.currentTime); }}
                                         onTimeUpdate={(e) => setCurrentVideoTime(e.target.currentTime)}
                                         onSeeked={handleSeek}
+                                        onError={(e) => {
+                                            if (!movieUrl) return;
+                                            if (!videoRetryRef.current) {
+                                                videoRetryRef.current = true;
+                                                const retryUrl = `${movieUrl}${movieUrl.includes("?") ? "&" : "?"}retry=${Date.now()}`;
+                                                if (videoRef.current) {
+                                                    videoRef.current.src = retryUrl;
+                                                    videoRef.current.load();
+                                                }
+                                                showToast("Video load retry பண்ணுறோம்... ⏳", "⚠️", "#f39c12");
+                                                return;
+                                            }
+                                            const mediaErr = e?.currentTarget?.error;
+                                            const mediaCode = mediaErr?.code ? ` (code ${mediaErr.code})` : "";
+                                            showToast(`Video load ஆகல${mediaCode}. URL temporary unavailable (503) இருக்கலாம். மீண்டும் try பண்ணு.`, "❌", "#e74c3c");
+                                        }}
                                     />
                                 ) : (
                                     <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "16px", padding: "20px" }}>
