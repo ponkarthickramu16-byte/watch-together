@@ -1443,6 +1443,20 @@ function Room() {
         playerBg: "#222", reactionBg: "#e8e8e8",
     };
 
+    // ── Worker proxy test — ABOVE all early returns (Rules of Hooks) ────────────
+    // This useEffect was previously placed after `if (!roomData) return`, which
+    // violates React hook ordering rules and causes React error #310.
+    useEffect(() => {
+        const url = roomData?.movieUrl || "";
+        const type = roomData?.movieType || "";
+        const isDrive = type === "drive" || (type !== "youtube" && url.includes("drive.google.com"));
+        if (!isDrive || !url || !url.includes("workers.dev")) return;
+        setVideoError(null);
+        setIsVideoLoading(true);
+        setWorkerStatus("checking");
+        testWorkerProxy(url);
+    }, [roomData?.movieUrl, roomData?.movieType, testWorkerProxy]);
+
     if (!nameSet) {
         // Bug 6 fix: show env-var warning banner before the name gate so devs
         // catch the problem immediately during development or after a bad deploy.
@@ -1474,20 +1488,6 @@ function Room() {
             </div>
         );
     }
-
-    // ── Worker proxy test — ABOVE all early returns (Rules of Hooks) ────────────
-    // This useEffect was previously placed after `if (!roomData) return`, which
-    // violates React hook ordering rules and causes React error #310.
-    useEffect(() => {
-        const url = roomData?.movieUrl || "";
-        const type = roomData?.movieType || "";
-        const isDrive = type === "drive" || (type !== "youtube" && url.includes("drive.google.com"));
-        if (!isDrive || !url || !url.includes("workers.dev")) return;
-        setVideoError(null);
-        setIsVideoLoading(true);
-        setWorkerStatus("checking");
-        testWorkerProxy(url);
-    }, [roomData?.movieUrl, roomData?.movieType, testWorkerProxy]);
 
     if (!roomData) return <div style={{ backgroundColor: T.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: T.text, fontSize: "18px" }}><p>⏳ Room load ஆகுது...</p></div>;
 
