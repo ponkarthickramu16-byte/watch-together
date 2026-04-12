@@ -301,13 +301,21 @@ function VoiceRecorder({ onSend, onCancel, T }) {
         </div>
     );
 }
-function WatchHistoryModal({ roomId, onClose, T }) {
+function WatchHistoryModal({ roomId, onClose, T, authUser, authChecked }) {
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
-    // Bug 2 fix: "index" = composite index இல்ல, "general" = வேற error
+    // Bug 2 fix: "index" = composite index இல்ல, "general" = வேற error, "auth" = not signed in
     const [errType, setErrType] = useState(null);
     const [indexUrl, setIndexUrl] = useState("");
     useEffect(() => {
+        // Fix: Don't query until auth state is resolved. Firestore rules require
+        // authentication — querying before auth resolves → "Missing or insufficient permissions".
+        if (!authChecked) return;
+        if (!authUser) {
+            setErrType("auth");
+            setLoading(false);
+            return;
+        }
         const q = query(collection(db, "watchHistory"), where("roomId", "==", roomId), orderBy("watchedAt", "desc"));
         return onSnapshot(q,
             (snap) => { setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); },
@@ -323,7 +331,7 @@ function WatchHistoryModal({ roomId, onClose, T }) {
                 setLoading(false);
             }
         );
-    }, [roomId]);
+    }, [roomId, authUser, authChecked]);
     return (
         <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.8)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <div style={{ backgroundColor: T.card, borderRadius: "16px", border: `1px solid ${T.border}`, width: "90%", maxWidth: "480px", maxHeight: "70vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -346,6 +354,7 @@ function WatchHistoryModal({ roomId, onClose, T }) {
                             <p style={{ color: T.text3, fontSize: "11px", margin: "8px 0 0 0" }}>Click பண்ணி "Create index" press பண்ணு. சில minutes-ல ready ஆகும்.</p>
                         </div>
                     )}
+                    {errType === "auth" && <p style={{ color: "#f39c12", textAlign: "center", padding: "20px", fontSize: "13px" }}>🔒 History பார்க்க login ஆகணும். Sign in பண்ணி try பண்ணு.</p>}
                     {errType === "general" && <p style={{ color: "#e74c3c", textAlign: "center", padding: "20px", fontSize: "13px" }}>❌ History load ஆகல. Refresh பண்ணி try பண்ணு.</p>}
                     {!loading && !errType && history.length === 0 && <p style={{ color: T.text3, textAlign: "center", padding: "20px" }}>இன்னும் எந்த movie-உம் பார்க்கல 🍿</p>}
                     {history.map(h => (
@@ -742,7 +751,7 @@ function Room() {
         };
         window.addEventListener("message", onMsg);
         return () => window.removeEventListener("message", onMsg);
-    }, [sendYtCmd, setCurrentVideoTime]);
+    }, [sendYtCmd]);
 
     useEffect(() => {
         if (!roomData?.movieUrl || !getYouTubeId(roomData.movieUrl)) return;
@@ -819,7 +828,10 @@ function Room() {
         }
     }, [roomData?.movieType, roomData?.movieUrl, roomData?.playbackRate, roomData?.quality, playbackRate, videoQuality]);
 
-    // FIX 4: Direct document lookup for better reliability  
+    // MERGED listener: handles roomData + call/typing/presence in a single onSnapshot.
+    // Previously two separate listeners on the SAME doc (roomId vs roomDocId) fired
+    // concurrently, causing cascading setState calls during React's render phase →
+    // React error #310. One listener = one batch of updates per Firestore event.
     const roomLoadedRef = useRef(false);
     useEffect(() => {
         console.log("[Watch Together] Setting up room listener for roomId:", roomId);
@@ -828,61 +840,114 @@ function Room() {
         const unsubscribe = onSnapshot(
             roomRef,
             (snapshot) => {
-                if (snapshot.exists()) {
-                    setRoomDocId(snapshot.id);
-                    const data = snapshot.data();
-                    const movieUrl = normalizeMovieUrl(data);
-                    const normalizedData = {
-                        ...data,
-                        movieUrl,
-                        movieType: getMovieType(data, movieUrl),
-                    };
-                    setRoomData(normalizedData);
-
-                    console.log("[Watch Together Debug] Room data:", {
-                        roomId,
-                        docId: snapshot.id,
-                        hasMovieUrl: !!movieUrl,
-                        movieUrl,
-                        movieUrlLength: movieUrl ? movieUrl.length : 0,
-                        rawMovieUrl: data.movieUrl,
-                        legacyVideoUrl: data.videoUrl,
-                        isYouTube: !!getYouTubeId(movieUrl),
-                        youtubeId: getYouTubeId(movieUrl)
-                    });
-
-                    if (!roomLoadedRef.current && movieUrl) {
-                        roomLoadedRef.current = true;
-                        const youtubeId = getYouTubeId(movieUrl);
-                        if (youtubeId) {
-                            showToast("YouTube video ready! 🎬", "✅", "#27ae60");
-                        } else {
-                            showToast("Video file ready! 🎬", "✅", "#27ae60");
-                        }
-                    } else if (!roomLoadedRef.current && !movieUrl) {
-                        roomLoadedRef.current = true;
-                        showToast("Room loaded! Movie URL add pannunga 🏠", "⚠️", "#f39c12");
-                    }
-
-                    if (!isSyncingRef.current) {
-                        setIsPlaying(normalizedData.isPlaying);
-                    }
-                    if (videoRef.current && normalizedData.currentTime !== undefined && !isSyncingSeekRef.current) {
-                        const diff = Math.abs(videoRef.current.currentTime - normalizedData.currentTime);
-                        if (diff > 0.8) {
-                            videoRef.current.currentTime = normalizedData.currentTime;
-                        }
-                    }
-                    if (videoRef.current && !isSyncingRef.current) {
-                        if (normalizedData.isPlaying && videoRef.current.paused) {
-                            videoRef.current.play().catch(() => { });
-                        } else if (!normalizedData.isPlaying && !videoRef.current.paused) {
-                            videoRef.current.pause();
-                        }
-                    }
-                } else {
+                if (!snapshot.exists()) {
                     console.error("[Watch Together] Room document does not exist:", roomId);
                     showToast("Room illa! Room ID check pannunga.", "❌", "#e74c3c");
+                    return;
+                }
+
+                const docId = snapshot.id;
+                setRoomDocId(docId);
+
+                const data = snapshot.data();
+                const movieUrl = normalizeMovieUrl(data);
+                const normalizedData = {
+                    ...data,
+                    movieUrl,
+                    movieType: getMovieType(data, movieUrl),
+                };
+                setRoomData(normalizedData);
+
+                console.log("[Watch Together Debug] Room data:", {
+                    roomId,
+                    docId,
+                    hasMovieUrl: !!movieUrl,
+                    movieUrl,
+                    movieUrlLength: movieUrl ? movieUrl.length : 0,
+                    rawMovieUrl: data.movieUrl,
+                    legacyVideoUrl: data.videoUrl,
+                    isYouTube: !!getYouTubeId(movieUrl),
+                    youtubeId: getYouTubeId(movieUrl)
+                });
+
+                if (!roomLoadedRef.current && movieUrl) {
+                    roomLoadedRef.current = true;
+                    const youtubeId = getYouTubeId(movieUrl);
+                    if (youtubeId) {
+                        showToast("YouTube video ready! 🎬", "✅", "#27ae60");
+                    } else {
+                        showToast("Video file ready! 🎬", "✅", "#27ae60");
+                    }
+                } else if (!roomLoadedRef.current && !movieUrl) {
+                    roomLoadedRef.current = true;
+                    showToast("Room loaded! Movie URL add pannunga 🏠", "⚠️", "#f39c12");
+                }
+
+                if (!isSyncingRef.current) {
+                    setIsPlaying(normalizedData.isPlaying);
+                }
+                if (videoRef.current && normalizedData.currentTime !== undefined && !isSyncingSeekRef.current) {
+                    const diff = Math.abs(videoRef.current.currentTime - normalizedData.currentTime);
+                    if (diff > 0.8) {
+                        videoRef.current.currentTime = normalizedData.currentTime;
+                    }
+                }
+                if (videoRef.current && !isSyncingRef.current) {
+                    if (normalizedData.isPlaying && videoRef.current.paused) {
+                        videoRef.current.play().catch(() => { });
+                    } else if (!normalizedData.isPlaying && !videoRef.current.paused) {
+                        videoRef.current.pause();
+                    }
+                }
+
+                // ── Call / Typing / Presence (formerly a second listener) ──────────────
+                // Handled here so all state updates from one Firestore event are batched
+                // together in a single React render, preventing error #310.
+                if (nameSet) {
+                    const me = usernameRef.current;
+
+                    // Call status
+                    if (data.callStatus === "calling" && data.callBy !== me && !showVideoCallRef.current) {
+                        setCallerName(data.callBy || "Partner");
+                        setIncomingCall(true);
+                    }
+                    if (data.callStatus === "idle" || data.callStatus === "ended") {
+                        setIncomingCall(false);
+                        if (data.callBy !== me) { setLivekitToken(null); setShowVideoCall(false); setCallStatus(null); }
+                    }
+
+                    // Participants join toast
+                    if (data.participants && Array.isArray(data.participants)) {
+                        if (!participantsInitializedRef.current) {
+                            participantsInitializedRef.current = true;
+                        } else {
+                            const prev = prevParticipantsRef.current;
+                            const newOnes = data.participants.filter(p => p !== me && !prev.includes(p));
+                            newOnes.forEach(p => showToast(`${p} join ஆனாங்க! 🎉`, "💚", "#27ae60"));
+                        }
+                        prevParticipantsRef.current = data.participants;
+                    }
+
+                    // Typing
+                    if (data.typing && data.typing !== me) {
+                        setPartnerTyping(true);
+                        clearTimeout(typingTimeoutRef.current);
+                        typingTimeoutRef.current = setTimeout(() => setPartnerTyping(false), 3000);
+                    } else if (!data.typing || data.typing === me) {
+                        setPartnerTyping(false);
+                        clearTimeout(typingTimeoutRef.current);
+                    }
+
+                    // Presence
+                    if (data.presence) {
+                        const now = Date.now();
+                        const online = Object.entries(data.presence)
+                            .filter(([, ts]) => ts && (now - ts) < 40000)
+                            .map(([name]) => name);
+                        setOnlineUsers(online);
+                    } else {
+                        setOnlineUsers([]);
+                    }
                 }
             },
             (error) => {
@@ -892,58 +957,9 @@ function Room() {
         );
 
         return unsubscribe;
-    }, [roomId, showToast]);
-
-    // FIX 2: Merged call+typing+presence into ONE onSnapshot listener
-    useEffect(() => {
-        if (!roomDocId || !nameSet) return;
-        return onSnapshot(doc(db, "rooms", roomDocId), (snap) => {
-            const data = snap.data(); if (!data) return;
-            const me = usernameRef.current;
-
-            // Call status
-            // Only show incoming call if not already in a call
-            if (data.callStatus === "calling" && data.callBy !== me && !showVideoCallRef.current) { setCallerName(data.callBy || "Partner"); setIncomingCall(true); }
-            if (data.callStatus === "idle" || data.callStatus === "ended") {
-                setIncomingCall(false);
-                if (data.callBy !== me) { setLivekitToken(null); setShowVideoCall(false); setCallStatus(null); }
-            }
-
-            // Participants join toast
-            if (data.participants && Array.isArray(data.participants)) {
-                if (!participantsInitializedRef.current) {
-                    // First snapshot — silently initialize, no toast for pre-existing members
-                    participantsInitializedRef.current = true;
-                } else {
-                    const prev = prevParticipantsRef.current;
-                    const newOnes = data.participants.filter(p => p !== me && !prev.includes(p));
-                    newOnes.forEach(p => showToast(`${p} join ஆனாங்க! 🎉`, "💚", "#27ae60"));
-                }
-                prevParticipantsRef.current = data.participants;
-            }
-
-            // Typing
-            if (data.typing && data.typing !== me) {
-                setPartnerTyping(true);
-                clearTimeout(typingTimeoutRef.current);
-                typingTimeoutRef.current = setTimeout(() => setPartnerTyping(false), 3000);
-            } else if (!data.typing || data.typing === me) {
-                setPartnerTyping(false);
-                clearTimeout(typingTimeoutRef.current);
-            }
-
-            // FIX 2: Presence handled here too - no separate listener
-            if (data.presence) {
-                const now = Date.now();
-                const online = Object.entries(data.presence)
-                    .filter(([, ts]) => ts && (now - ts) < 40000)
-                    .map(([name]) => name);
-                setOnlineUsers(online);
-            } else {
-                setOnlineUsers([]);
-            }
-        });
-    }, [roomDocId, nameSet, showToast]);
+    // nameSet is intentionally included so the call/typing/presence block activates
+    // after the user sets their name, without creating a second subscription.
+    }, [roomId, nameSet, showToast]);
 
     // Online/offline toasts
     useEffect(() => {
@@ -1486,7 +1502,7 @@ function Room() {
             flexDirection: "column"
         }}>
             <Toast toasts={toasts} />
-            {showHistory && <WatchHistoryModal roomId={roomId} onClose={() => setShowHistory(false)} T={T} />}
+            {showHistory && <WatchHistoryModal roomId={roomId} onClose={() => setShowHistory(false)} T={T} authUser={authUser} authChecked={authChecked} />}
             {showThemeCustomizer && (
                 <ThemeCustomizer
                     roomId={roomId}
