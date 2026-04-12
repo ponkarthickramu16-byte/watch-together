@@ -386,6 +386,7 @@ function Room() {
     const [newMessage, setNewMessage] = useState("");
     const [username, setUsername] = useState("");
     const [nameSet, setNameSet] = useState(false);
+    const nameSetRef = useRef(false); // ref so room listener doesn't re-subscribe on nameSet change
     const [showChat, setShowChat] = useState(false);
     const [floatingReactions, setFloatingReactions] = useState([]);
     const [livekitToken, setLivekitToken] = useState(null);
@@ -461,6 +462,7 @@ function Room() {
     const pendingYtCmdRef = useRef([]);
 
     useEffect(() => { usernameRef.current = username; }, [username]);
+    useEffect(() => { nameSetRef.current = nameSet; }, [nameSet]);
 
     // 🔔 Push notifications — temporarily disabled (TODO: re-enable)
     const registerToken = async () => false;
@@ -492,6 +494,10 @@ function Room() {
             ytSrcRef.current = null;
             ytReadyRef.current = false;
             pendingYtCmdRef.current = [];
+            // Reset history log so the new movie gets recorded too.
+            // Without this, changing the movie URL in the same room silently
+            // skips the watchHistory entry for the new movie.
+            historyLoggedRef.current = false;
         }
     }, [roomData?.movieUrl]);
 
@@ -903,7 +909,7 @@ function Room() {
                 // ── Call / Typing / Presence (formerly a second listener) ──────────────
                 // Handled here so all state updates from one Firestore event are batched
                 // together in a single React render, preventing error #310.
-                if (nameSet) {
+                if (nameSetRef.current) {
                     const me = usernameRef.current;
 
                     // Call status
@@ -959,7 +965,7 @@ function Room() {
         return unsubscribe;
     // nameSet is intentionally included so the call/typing/presence block activates
     // after the user sets their name, without creating a second subscription.
-    }, [roomId, nameSet, showToast]);
+    }, [roomId, showToast]); // nameSet removed — nameSetRef.current used inside callback instead
 
     // Online/offline toasts
     useEffect(() => {

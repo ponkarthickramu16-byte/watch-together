@@ -127,19 +127,45 @@ function Home({ user }) {
         setHistoryError("");
         setHistoryLoading(true);
 
-        let fallbackUnsub = null;
-
         const handleErr = (err) => {
             console.error("History load error:", err);
             if (err.code === "failed-precondition") {
                 const urlMatch = err.message?.match(/https:\/\/console\.firebase\.google\.com[^\s]+/);
                 setIndexCreateUrl(urlMatch ? urlMatch[0] : "https://console.firebase.google.com/project/_/firestore/indexes");
                 setHistoryError("index");
+            } else if (err.code === "permission-denied") {
+                // Firestore rules block unauthenticated or unauthorized reads.
+                // Show empty history silently — user is not logged in or rules need update.
+                setHistory([]);
+                setHistoryError("");
             } else {
                 setHistoryError("general");
             }
             setHistoryLoading(false);
         };
+
+        // Fix: Run both queries independently (no nested listeners).
+        // Nested onSnapshot inside another onSnapshot callback causes stale
+        // listeners to pile up — every outer snapshot fires creates a new inner
+        // listener that is never cleaned up. Instead, run them in parallel and
+        // merge results, deduplicating by document ID.
+        const latestByKey = new Map(); // id → data
+        let uidDone = !uid;
+        let nameDone = !fallbackName;
+
+        const merge = () => {
+            if (!uidDone || !nameDone) return; // wait for both to resolve
+            const merged = Array.from(latestByKey.values())
+                .sort((a, b) => {
+                    const ta = a.watchedAt?.toMillis?.() ?? 0;
+                    const tb = b.watchedAt?.toMillis?.() ?? 0;
+                    return tb - ta;
+                });
+            setHistory(merged);
+            setHistoryLoading(false);
+        };
+
+        const unsubs = [];
 
         if (uid) {
             const qUid = query(
@@ -147,44 +173,29 @@ function Home({ user }) {
                 where("watchedByUid", "==", uid),
                 orderBy("watchedAt", "desc")
             );
-
-            const unsub = onSnapshot(qUid, (snap) => {
-                if (!snap.empty) {
-                    fallbackUnsub?.();
-                    fallbackUnsub = null;
-                    setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-                    setHistoryLoading(false);
-                    return;
-                }
-                if (fallbackName && !fallbackUnsub) {
-                    const qName = query(
-                        collection(db, "watchHistory"),
-                        where("watchedBy", "==", fallbackName),
-                        orderBy("watchedAt", "desc")
-                    );
-                    fallbackUnsub = onSnapshot(qName, (snap2) => {
-                        setHistory(snap2.docs.map(d => ({ id: d.id, ...d.data() })));
-                        setHistoryLoading(false);
-                    }, handleErr);
-                } else if (!fallbackName) {
-                    setHistory([]);
-                    setHistoryLoading(false);
-                }
-            }, handleErr);
-
-            return () => { fallbackUnsub?.(); unsub(); };
+            const unsubUid = onSnapshot(qUid, (snap) => {
+                snap.docs.forEach(d => latestByKey.set(d.id, { id: d.id, ...d.data() }));
+                uidDone = true;
+                merge();
+            }, (err) => { uidDone = true; handleErr(err); });
+            unsubs.push(unsubUid);
         }
 
-        const qNameOnly = query(
-            collection(db, "watchHistory"),
-            where("watchedBy", "==", fallbackName),
-            orderBy("watchedAt", "desc")
-        );
-        const unsubNameOnly = onSnapshot(qNameOnly, (snap) => {
-            setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-            setHistoryLoading(false);
-        }, handleErr);
-        return () => unsubNameOnly();
+        if (fallbackName) {
+            const qName = query(
+                collection(db, "watchHistory"),
+                where("watchedBy", "==", fallbackName),
+                orderBy("watchedAt", "desc")
+            );
+            const unsubName = onSnapshot(qName, (snap) => {
+                snap.docs.forEach(d => latestByKey.set(d.id, { id: d.id, ...d.data() }));
+                nameDone = true;
+                merge();
+            }, (err) => { nameDone = true; handleErr(err); });
+            unsubs.push(unsubName);
+        }
+
+        return () => unsubs.forEach(u => u());
     }, [user?.uid, user?.displayName, user?.email, profile?.name]);
 
     // ─── Create Room ────────────────────────────────────────────────────────────
@@ -236,8 +247,8 @@ function Home({ user }) {
                 movieTitle: isYouTube ? "YouTube Video" : isDrive ? "Google Drive Video" : "Uploaded Video",
                 isPlaying: false,
                 currentTime: 0,
-                participants: [auth.currentUser.uid],
-                presence: { [auth.currentUser.uid]: Date.now() },
+                participants: [], // Room.jsx adds username on join; UID here mismatches username check
+                presence: {}, // Room.jsx writes presence.${username}; UID key here conflicts
                 typing: "",
                 callStatus: "idle",
             };
