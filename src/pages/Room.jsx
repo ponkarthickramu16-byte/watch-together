@@ -405,6 +405,10 @@ function Room() {
     const [showThemeCustomizer, setShowThemeCustomizer] = useState(false);
     const [roomTheme, setRoomTheme] = useState(THEME_PRESETS.default.colors);
     const [backgroundPattern, setBackgroundPattern] = useState("none");
+    const [videoError, setVideoError] = useState(null);
+    const [videoRetryCount, setVideoRetryCount] = useState(0);
+    const [isVideoLoading, setIsVideoLoading] = useState(true);
+    const [workerStatus, setWorkerStatus] = useState("checking");
 
     // Firebase auth is async on first load; `auth.currentUser` can be null briefly.
     // We wait for auth state to be resolved before writing watchHistory so
@@ -438,6 +442,7 @@ function Room() {
     const lastReactionTimeRef = useRef({}); // per-emoji debounce — flood prevention
     const lastNotifiedMessageIdRef = useRef(null); // prevent duplicate hidden-chat toasts
     const videoRetryRef = useRef(false); // retry uploaded video once with cache-buster
+    const videoRetryTimeoutRef = useRef(null);
 
     // FIX 1: YouTube refs defined early - before any useEffect
     // pendingYtCmdRef is now a QUEUE (array) — multiple commands before player ready
@@ -496,7 +501,20 @@ function Room() {
         setUnreadCount(0);
         lastNotifiedMessageIdRef.current = null;
         videoRetryRef.current = false;
+        setVideoError(null);
+        setVideoRetryCount(0);
+        setIsVideoLoading(true);
+        setWorkerStatus("checking");
     }, [roomId]);
+
+    useEffect(() => {
+        return () => {
+            if (videoRetryTimeoutRef.current) {
+                clearTimeout(videoRetryTimeoutRef.current);
+                videoRetryTimeoutRef.current = null;
+            }
+        };
+    }, []);
     
     useEffect(() => {
         let interval;
@@ -536,6 +554,106 @@ function Room() {
         setToasts(prev => [...prev, { id, message, icon, color }]);
         setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
     }, []);
+
+    const testWorkerProxy = useCallback(async (url) => {
+        try {
+            console.log("[Watch Together] Testing worker proxy:", url);
+            const response = await fetch(url, {
+                method: "HEAD",
+                cache: "no-cache",
+            });
+            console.log("[Watch Together] Worker response status:", response.status);
+            console.log("[Watch Together] Worker response headers:", Object.fromEntries(response.headers.entries()));
+
+            if (response.status === 503) {
+                setWorkerStatus("error");
+                setVideoError("Worker-ல 503 error! Check your Cloudflare dashboard.");
+                return false;
+            }
+            if (!response.ok) {
+                setWorkerStatus("error");
+                setVideoError(`Worker error: ${response.status} ${response.statusText}`);
+                return false;
+            }
+
+            const corsOrigin = response.headers.get("Access-Control-Allow-Origin");
+            if (!corsOrigin) {
+                setWorkerStatus("error");
+                setVideoError("Worker-ல CORS headers இல்ல! Worker code check பண்ணு.");
+                return false;
+            }
+
+            const acceptRanges = response.headers.get("Accept-Ranges");
+            if (acceptRanges !== "bytes") {
+                console.warn("[Watch Together] Worker may not support range requests");
+            }
+
+            setWorkerStatus("ok");
+            return true;
+        } catch (error) {
+            console.error("[Watch Together] Worker test failed:", error);
+            setWorkerStatus("error");
+            setVideoError(`Worker unreachable: ${error.message}`);
+            return false;
+        }
+    }, []);
+
+    const handleVideoCanPlay = useCallback(() => {
+        console.log("[Watch Together] Video can play!");
+        setIsVideoLoading(false);
+        setVideoError(null);
+        setVideoRetryCount(0);
+        if (videoRetryTimeoutRef.current) {
+            clearTimeout(videoRetryTimeoutRef.current);
+            videoRetryTimeoutRef.current = null;
+        }
+    }, []);
+
+    const handleVideoError = useCallback((event) => {
+        const video = event.target;
+        const error = video?.error;
+        const debug = {
+            code: error?.code ?? null,
+            message: error?.message ?? "Unknown error",
+            networkState: video?.networkState ?? null,
+            readyState: video?.readyState ?? null,
+            currentSrc: video?.currentSrc ?? null,
+        };
+        console.error("[Watch Together] Video error:", debug);
+
+        if (videoRetryTimeoutRef.current) {
+            clearTimeout(videoRetryTimeoutRef.current);
+            videoRetryTimeoutRef.current = null;
+        }
+
+        setIsVideoLoading(false);
+        if (error?.code === 2 && videoRetryCount < 3) {
+            setVideoError(`Network error (${videoRetryCount + 1}/3) - retry பண்றோம்...`);
+            videoRetryTimeoutRef.current = setTimeout(() => {
+                console.log("[Watch Together] Retrying video load, attempt:", videoRetryCount + 1);
+                setVideoRetryCount((prev) => prev + 1);
+                if (video) {
+                    const currentTime = video.currentTime || 0;
+                    const oldSrc = video.src;
+                    const separator = oldSrc.includes("?") ? "&" : "?";
+                    video.src = `${oldSrc}${separator}_retry=${Date.now()}`;
+                    video.load();
+                    if (currentTime > 0) video.currentTime = currentTime;
+                }
+                videoRetryTimeoutRef.current = null;
+            }, 2000 * (videoRetryCount + 1));
+            return;
+        }
+
+        let errorMsg = "Video load ஆகல!";
+        if (error?.code === 2) {
+            errorMsg = "503 Service Unavailable - Worker down இருக்கோ அல்லது Google Drive access blocked இருக்கோ!";
+        } else if (error?.code === 4) {
+            errorMsg = "Video format supported இல்ல அல்லது worker proxy வேலை செய்யல!";
+        }
+        setVideoError(errorMsg);
+        showToast(errorMsg, "❌", "#e74c3c");
+    }, [showToast, videoRetryCount]);
 
     useEffect(() => {
         // Screenshot blocking strategy:
@@ -1350,6 +1468,14 @@ function Room() {
     const isDriveVideo = movieType === "drive" || (!isYouTubeVideo && movieUrl.includes("drive.google.com"));
     const hasMovieUrl = !!movieUrl;
 
+    useEffect(() => {
+        if (!isDriveVideo || !movieUrl || !movieUrl.includes("workers.dev")) return;
+        setVideoError(null);
+        setIsVideoLoading(true);
+        setWorkerStatus("checking");
+        testWorkerProxy(movieUrl);
+    }, [isDriveVideo, movieUrl, testWorkerProxy]);
+
     return (
         <div style={{
             backgroundColor: T.bg,
@@ -1483,18 +1609,157 @@ function Room() {
                                     </div>
                                 ) : isDriveVideo ? (
                                     // ── Google Drive → Cloudflare Proxy → <video> full sync ──
-                                    <video
-                                        ref={videoRef}
-                                        src={movieUrl}
-                                        controls
-                                        playsInline
-                                        style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
-                                        onPlay={() => { if (joinedRef.current) updatePlayState(true, videoRef.current?.currentTime); }}
-                                        onPause={() => { if (joinedRef.current) updatePlayState(false, videoRef.current?.currentTime); }}
-                                        onTimeUpdate={(e) => setCurrentVideoTime(e.target.currentTime)}
-                                        onSeeked={handleSeek}
-                                        onError={() => showToast("Drive video load ஆகல! Share settings 'Anyone with link' ஆ இருக்கா check பண்ணு.", "❌", "#e74c3c")}
-                                    />
+                                    <div style={{ width: "100%", height: "100%", backgroundColor: "#000", position: "relative" }}>
+                                        {isVideoLoading && !videoError && (
+                                            <div style={{
+                                                position: "absolute",
+                                                inset: 0,
+                                                display: "flex",
+                                                flexDirection: "column",
+                                                alignItems: "center",
+                                                justifyContent: "center",
+                                                backgroundColor: "rgba(0,0,0,0.85)",
+                                                zIndex: 10,
+                                                gap: "16px"
+                                            }}>
+                                                <div style={{
+                                                    width: "50px",
+                                                    height: "50px",
+                                                    border: "4px solid #333",
+                                                    borderTop: "4px solid #ff6b35",
+                                                    borderRadius: "50%",
+                                                    animation: "spin 1s linear infinite"
+                                                }} />
+                                                <p style={{ color: "white", fontSize: "16px", margin: 0 }}>
+                                                    {workerStatus === "checking" ? "Worker checking..." : "Video loading..."}
+                                                </p>
+                                                <p style={{ color: "#aaa", fontSize: "12px", margin: 0 }}>
+                                                    {movieUrl.split("/")[2]}
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        {videoError && (
+                                            <div style={{
+                                                position: "absolute",
+                                                inset: 0,
+                                                display: "flex",
+                                                flexDirection: "column",
+                                                alignItems: "center",
+                                                justifyContent: "center",
+                                                backgroundColor: "rgba(0,0,0,0.9)",
+                                                zIndex: 10,
+                                                padding: "20px"
+                                            }}>
+                                                <div style={{ fontSize: "48px", marginBottom: "16px" }}>⚠️</div>
+                                                <p style={{ color: "#ff6b35", fontSize: "18px", fontWeight: "bold", margin: "0 0 12px 0", textAlign: "center" }}>
+                                                    Video Load Error
+                                                </p>
+                                                <p style={{ color: "white", fontSize: "14px", margin: "0 0 20px 0", textAlign: "center", maxWidth: "500px" }}>
+                                                    {videoError}
+                                                </p>
+                                                {videoRetryCount < 3 && (
+                                                    <button
+                                                        onClick={() => {
+                                                            setVideoError(null);
+                                                            setVideoRetryCount((prev) => prev + 1);
+                                                            if (videoRef.current) {
+                                                                videoRef.current.load();
+                                                            }
+                                                        }}
+                                                        style={{
+                                                            padding: "12px 24px",
+                                                            backgroundColor: "#ff6b35",
+                                                            color: "white",
+                                                            border: "none",
+                                                            borderRadius: "8px",
+                                                            cursor: "pointer",
+                                                            fontSize: "14px",
+                                                            fontWeight: "bold",
+                                                            marginBottom: "12px"
+                                                        }}
+                                                    >
+                                                        🔄 Retry ({3 - videoRetryCount} attempts left)
+                                                    </button>
+                                                )}
+                                                <div style={{
+                                                    marginTop: "20px",
+                                                    padding: "16px",
+                                                    backgroundColor: "rgba(255,107,53,0.1)",
+                                                    borderRadius: "8px",
+                                                    maxWidth: "500px"
+                                                }}>
+                                                    <p style={{ color: "#ff6b35", fontSize: "12px", fontWeight: "bold", margin: "0 0 8px 0" }}>
+                                                        🔧 Troubleshooting:
+                                                    </p>
+                                                    <ul style={{ color: "#aaa", fontSize: "11px", margin: 0, paddingLeft: "20px" }}>
+                                                        <li>Cloudflare Worker code சரியா deploy ஆச்சா?</li>
+                                                        <li>Worker-ல CORS headers + range requests support இருக்கா?</li>
+                                                        <li>Google Drive file "Anyone with link" access இருக்கா?</li>
+                                                        <li>Worker URL console-ல direct-ஆ open பண்ணி பாருங்க</li>
+                                                    </ul>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <video
+                                            ref={videoRef}
+                                            src={movieUrl}
+                                            controls
+                                            playsInline
+                                            crossOrigin="anonymous"
+                                            onPlay={() => {
+                                                if (joinedRef.current) {
+                                                    updatePlayState(true, videoRef.current?.currentTime);
+                                                }
+                                                setIsVideoLoading(false);
+                                            }}
+                                            onPause={() => {
+                                                if (joinedRef.current) {
+                                                    updatePlayState(false, videoRef.current?.currentTime);
+                                                }
+                                            }}
+                                            onTimeUpdate={(e) => setCurrentVideoTime(e.target.currentTime)}
+                                            onSeeked={handleSeek}
+                                            onError={handleVideoError}
+                                            onCanPlay={handleVideoCanPlay}
+                                            onLoadStart={() => {
+                                                console.log("[Watch Together] Video load started");
+                                                setIsVideoLoading(true);
+                                            }}
+                                            onLoadedMetadata={() => {
+                                                console.log("[Watch Together] Video metadata loaded");
+                                            }}
+                                            onLoadedData={() => {
+                                                console.log("[Watch Together] Video data loaded");
+                                            }}
+                                            style={{
+                                                width: "100%",
+                                                height: "100%",
+                                                backgroundColor: "#000",
+                                                display: videoError ? "none" : "block"
+                                            }}
+                                        />
+                                        {import.meta.env.DEV && !videoError && (
+                                            <div style={{
+                                                position: "absolute",
+                                                top: "10px",
+                                                right: "10px",
+                                                backgroundColor: "rgba(0,0,0,0.7)",
+                                                padding: "8px 12px",
+                                                borderRadius: "6px",
+                                                fontSize: "10px",
+                                                color: "#aaa",
+                                                fontFamily: "monospace",
+                                                maxWidth: "300px",
+                                                wordBreak: "break-all"
+                                            }}>
+                                                <div>Worker: {workerStatus}</div>
+                                                <div>Retries: {videoRetryCount}</div>
+                                                <div>URL: {movieUrl.substring(0, 50)}...</div>
+                                            </div>
+                                        )}
+                                    </div>
                                 ) : hasMovieUrl ? (
                                     <video
                                         ref={videoRef}
