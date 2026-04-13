@@ -38,9 +38,8 @@ const getYouTubeId = (url) => {
     return match ? match[1] : null;
 };
 
-const getYouTubeSrc = (id) => {
-    return `https://www.youtube.com/embed/${id}?enablejsapi=1&autoplay=1`;
-};
+// getYouTubeSrc is defined as a useCallback inside Room() — see below.
+// This top-level version is intentionally removed to prevent confusion with autoplay=1.
 
 const normalizeMovieUrl = (data) => {
     if (!data) return "";
@@ -415,10 +414,6 @@ function Room() {
     const [showThemeCustomizer, setShowThemeCustomizer] = useState(false);
     const [roomTheme, setRoomTheme] = useState(THEME_PRESETS.default.colors);
     const [backgroundPattern, setBackgroundPattern] = useState("none");
-    const [videoError, setVideoError] = useState(null);
-    const [videoRetryCount, setVideoRetryCount] = useState(0);
-    const [isVideoLoading, setIsVideoLoading] = useState(true);
-    const [workerStatus, setWorkerStatus] = useState("checking");
 
     // Firebase auth is async on first load; `auth.currentUser` can be null briefly.
     // We wait for auth state to be resolved before writing watchHistory so
@@ -451,8 +446,6 @@ function Room() {
     const reactionTimers = useRef([]); // cleanup floating reaction timeouts on unmount
     const lastReactionTimeRef = useRef({}); // per-emoji debounce — flood prevention
     const lastNotifiedMessageIdRef = useRef(null); // prevent duplicate hidden-chat toasts
-    const videoRetryRef = useRef(false); // retry uploaded video once with cache-buster
-    const videoRetryTimeoutRef = useRef(null);
 
     // FIX 1: YouTube refs defined early - before any useEffect
     // pendingYtCmdRef is now a QUEUE (array) — multiple commands before player ready
@@ -515,21 +508,9 @@ function Room() {
         setOnlineUsers([]);
         setUnreadCount(0);
         lastNotifiedMessageIdRef.current = null;
-        videoRetryRef.current = false;
-        setVideoError(null);
-        setVideoRetryCount(0);
-        setIsVideoLoading(true);
-        setWorkerStatus("checking");
+
     }, [roomId]);
 
-    useEffect(() => {
-        return () => {
-            if (videoRetryTimeoutRef.current) {
-                clearTimeout(videoRetryTimeoutRef.current);
-                videoRetryTimeoutRef.current = null;
-            }
-        };
-    }, []);
     
     useEffect(() => {
         let interval;
@@ -570,105 +551,7 @@ function Room() {
         setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
     }, []);
 
-    const testWorkerProxy = useCallback(async (url) => {
-        try {
-            console.log("[Watch Together] Testing worker proxy:", url);
-            const response = await fetch(url, {
-                method: "HEAD",
-                cache: "no-cache",
-            });
-            console.log("[Watch Together] Worker response status:", response.status);
-            console.log("[Watch Together] Worker response headers:", Object.fromEntries(response.headers.entries()));
-
-            if (response.status === 503) {
-                setWorkerStatus("error");
-                setVideoError("Worker-ல 503 error! Check your Cloudflare dashboard.");
-                return false;
-            }
-            if (!response.ok) {
-                setWorkerStatus("error");
-                setVideoError(`Worker error: ${response.status} ${response.statusText}`);
-                return false;
-            }
-
-            const corsOrigin = response.headers.get("Access-Control-Allow-Origin");
-            if (!corsOrigin) {
-                setWorkerStatus("error");
-                setVideoError("Worker-ல CORS headers இல்ல! Worker code check பண்ணு.");
-                return false;
-            }
-
-            const acceptRanges = response.headers.get("Accept-Ranges");
-            if (acceptRanges !== "bytes") {
-                console.warn("[Watch Together] Worker may not support range requests");
-            }
-
-            setWorkerStatus("ok");
-            return true;
-        } catch (error) {
-            console.error("[Watch Together] Worker test failed:", error);
-            setWorkerStatus("error");
-            setVideoError(`Worker unreachable: ${error.message}`);
-            return false;
-        }
-    }, []);
-
-    const handleVideoCanPlay = useCallback(() => {
-        console.log("[Watch Together] Video can play!");
-        setIsVideoLoading(false);
-        setVideoError(null);
-        setVideoRetryCount(0);
-        if (videoRetryTimeoutRef.current) {
-            clearTimeout(videoRetryTimeoutRef.current);
-            videoRetryTimeoutRef.current = null;
-        }
-    }, []);
-
-    const handleVideoError = useCallback((event) => {
-        const video = event.target;
-        const error = video?.error;
-        const debug = {
-            code: error?.code ?? null,
-            message: error?.message ?? "Unknown error",
-            networkState: video?.networkState ?? null,
-            readyState: video?.readyState ?? null,
-            currentSrc: video?.currentSrc ?? null,
-        };
-        console.error("[Watch Together] Video error:", debug);
-
-        if (videoRetryTimeoutRef.current) {
-            clearTimeout(videoRetryTimeoutRef.current);
-            videoRetryTimeoutRef.current = null;
-        }
-
-        setIsVideoLoading(false);
-        if (error?.code === 2 && videoRetryCount < 3) {
-            setVideoError(`Network error (${videoRetryCount + 1}/3) - retry பண்றோம்...`);
-            videoRetryTimeoutRef.current = setTimeout(() => {
-                console.log("[Watch Together] Retrying video load, attempt:", videoRetryCount + 1);
-                setVideoRetryCount((prev) => prev + 1);
-                if (video) {
-                    const currentTime = video.currentTime || 0;
-                    const oldSrc = video.src;
-                    const separator = oldSrc.includes("?") ? "&" : "?";
-                    video.src = `${oldSrc}${separator}_retry=${Date.now()}`;
-                    video.load();
-                    if (currentTime > 0) video.currentTime = currentTime;
-                }
-                videoRetryTimeoutRef.current = null;
-            }, 2000 * (videoRetryCount + 1));
-            return;
-        }
-
-        let errorMsg = "Video load ஆகல!";
-        if (error?.code === 2) {
-            errorMsg = "503 Service Unavailable - Worker down இருக்கோ அல்லது Google Drive access blocked இருக்கோ!";
-        } else if (error?.code === 4) {
-            errorMsg = "Video format supported இல்ல அல்லது worker proxy வேலை செய்யல!";
-        }
-        setVideoError(errorMsg);
-        showToast(errorMsg, "❌", "#e74c3c");
-    }, [showToast, videoRetryCount]);
+    // testWorkerProxy removed — Cloudflare Drive proxy no longer used.
 
     useEffect(() => {
         // Screenshot blocking strategy:
@@ -864,17 +747,14 @@ function Room() {
                 };
                 setRoomData(normalizedData);
 
-                console.log("[Watch Together Debug] Room data:", {
-                    roomId,
-                    docId,
-                    hasMovieUrl: !!movieUrl,
-                    movieUrl,
-                    movieUrlLength: movieUrl ? movieUrl.length : 0,
-                    rawMovieUrl: data.movieUrl,
-                    legacyVideoUrl: data.videoUrl,
-                    isYouTube: !!getYouTubeId(movieUrl),
-                    youtubeId: getYouTubeId(movieUrl)
-                });
+                // Debug log only in dev — avoids console flood in production
+                if (import.meta.env.DEV) {
+                    console.log("[Watch Together Debug] Room data:", {
+                        roomId, docId, movieUrl,
+                        isYouTube: !!getYouTubeId(movieUrl),
+                        youtubeId: getYouTubeId(movieUrl)
+                    });
+                }
 
                 if (!roomLoadedRef.current && movieUrl) {
                     roomLoadedRef.current = true;
@@ -898,12 +778,18 @@ function Room() {
                         videoRef.current.currentTime = normalizedData.currentTime;
                     }
                 }
+                // Auto-sync play/pause from Firestore — but only pause is safe to call
+                // programmatically. play() requires a user gesture in all modern browsers.
+                // Unpausing without gesture → silent failure or NotAllowedError.
+                // Fix: pause syncs automatically; play is triggered by the user's own click
+                // (which calls updatePlayState), so the joining user sees the current time
+                // position and can tap Play themselves.
                 if (videoRef.current && !isSyncingRef.current) {
-                    if (normalizedData.isPlaying && videoRef.current.paused) {
-                        videoRef.current.play().catch(() => { });
-                    } else if (!normalizedData.isPlaying && !videoRef.current.paused) {
+                    if (!normalizedData.isPlaying && !videoRef.current.paused) {
                         videoRef.current.pause();
                     }
+                    // Do NOT call .play() here — browser blocks it without user gesture.
+                    // The Play Sync button / onPlay handler handles play state writes.
                 }
 
                 // ── Call / Typing / Presence (formerly a second listener) ──────────────
@@ -1216,7 +1102,7 @@ function Room() {
         const update = { isPlaying: playing };
         if (time !== undefined) update.currentTime = time;
         await updateDoc(doc(db, "rooms", roomDocId), update);
-        setTimeout(() => { isSyncingRef.current = false; }, 1000);
+        setTimeout(() => { isSyncingRef.current = false; }, 2000); // 2s: prevents own write triggering own listener on slow connections
     }, [roomDocId]);
 
     const handleSeek = useCallback(async () => {
@@ -1449,19 +1335,8 @@ function Room() {
         playerBg: "#222", reactionBg: "#e8e8e8",
     };
 
-    // ── Worker proxy test — ABOVE all early returns (Rules of Hooks) ────────────
-    // This useEffect was previously placed after `if (!roomData) return`, which
-    // violates React hook ordering rules and causes React error #310.
-    useEffect(() => {
-        const url = roomData?.movieUrl || "";
-        const type = roomData?.movieType || "";
-        const isDrive = type === "drive" || (type !== "youtube" && url.includes("drive.google.com"));
-        if (!isDrive || !url || !url.includes("workers.dev")) return;
-        setVideoError(null);
-        setIsVideoLoading(true);
-        setWorkerStatus("checking");
-        testWorkerProxy(url);
-    }, [roomData?.movieUrl, roomData?.movieType, testWorkerProxy]);
+    // Worker proxy test removed — Cloudflare Drive proxy no longer used.
+    // YouTube Unlisted videos are the recommended approach for sync playback.
 
     if (!nameSet) {
         // Bug 6 fix: show env-var warning banner before the name gate so devs
@@ -1501,7 +1376,7 @@ function Room() {
     const movieType = roomData?.movieType || getMovieType(roomData, movieUrl);
     const youtubeId = getYouTubeId(movieUrl);
     const isYouTubeVideo = movieType === "youtube" || !!youtubeId;
-    const isDriveVideo = movieType === "drive" || (!isYouTubeVideo && movieUrl.includes("drive.google.com"));
+    // isDriveVideo removed — Drive URLs now handled by the generic <video> fallback like any direct URL.
     const hasMovieUrl = !!movieUrl;
 
     return (
@@ -1625,6 +1500,7 @@ function Room() {
 
                                         <div style={{ position: "absolute", bottom: "16px", left: "50%", transform: "translateX(-50%)", zIndex: 10 }}>
                                             <button onClick={() => {
+                                                if (!joinedRef.current) return; // prevent overwriting host state on join
                                                 const p = !isPlaying;
                                                 setIsPlaying(p);
                                                 updatePlayState(p);
@@ -1634,159 +1510,6 @@ function Room() {
                                                 {isPlaying ? "⏸ Pause Sync" : "▶ Play Sync"}
                                             </button>
                                         </div>
-                                    </div>
-                                ) : isDriveVideo ? (
-                                    // ── Google Drive → Cloudflare Proxy → <video> full sync ──
-                                    <div style={{ width: "100%", height: "100%", backgroundColor: "#000", position: "relative" }}>
-                                        {isVideoLoading && !videoError && (
-                                            <div style={{
-                                                position: "absolute",
-                                                inset: 0,
-                                                display: "flex",
-                                                flexDirection: "column",
-                                                alignItems: "center",
-                                                justifyContent: "center",
-                                                backgroundColor: "rgba(0,0,0,0.85)",
-                                                zIndex: 10,
-                                                gap: "16px"
-                                            }}>
-                                                <div style={{
-                                                    width: "50px",
-                                                    height: "50px",
-                                                    border: "4px solid #333",
-                                                    borderTop: "4px solid #ff6b35",
-                                                    borderRadius: "50%",
-                                                    animation: "spin 1s linear infinite"
-                                                }} />
-                                                <p style={{ color: "white", fontSize: "16px", margin: 0 }}>
-                                                    {workerStatus === "checking" ? "Worker checking..." : "Video loading..."}
-                                                </p>
-                                                <p style={{ color: "#aaa", fontSize: "12px", margin: 0 }}>
-                                                    {movieUrl.split("/")[2]}
-                                                </p>
-                                            </div>
-                                        )}
-
-                                        {videoError && (
-                                            <div style={{
-                                                position: "absolute",
-                                                inset: 0,
-                                                display: "flex",
-                                                flexDirection: "column",
-                                                alignItems: "center",
-                                                justifyContent: "center",
-                                                backgroundColor: "rgba(0,0,0,0.9)",
-                                                zIndex: 10,
-                                                padding: "20px"
-                                            }}>
-                                                <div style={{ fontSize: "48px", marginBottom: "16px" }}>⚠️</div>
-                                                <p style={{ color: "#ff6b35", fontSize: "18px", fontWeight: "bold", margin: "0 0 12px 0", textAlign: "center" }}>
-                                                    Video Load Error
-                                                </p>
-                                                <p style={{ color: "white", fontSize: "14px", margin: "0 0 20px 0", textAlign: "center", maxWidth: "500px" }}>
-                                                    {videoError}
-                                                </p>
-                                                {videoRetryCount < 3 && (
-                                                    <button
-                                                        onClick={() => {
-                                                            setVideoError(null);
-                                                            setVideoRetryCount((prev) => prev + 1);
-                                                            if (videoRef.current) {
-                                                                videoRef.current.load();
-                                                            }
-                                                        }}
-                                                        style={{
-                                                            padding: "12px 24px",
-                                                            backgroundColor: "#ff6b35",
-                                                            color: "white",
-                                                            border: "none",
-                                                            borderRadius: "8px",
-                                                            cursor: "pointer",
-                                                            fontSize: "14px",
-                                                            fontWeight: "bold",
-                                                            marginBottom: "12px"
-                                                        }}
-                                                    >
-                                                        🔄 Retry ({3 - videoRetryCount} attempts left)
-                                                    </button>
-                                                )}
-                                                <div style={{
-                                                    marginTop: "20px",
-                                                    padding: "16px",
-                                                    backgroundColor: "rgba(255,107,53,0.1)",
-                                                    borderRadius: "8px",
-                                                    maxWidth: "500px"
-                                                }}>
-                                                    <p style={{ color: "#ff6b35", fontSize: "12px", fontWeight: "bold", margin: "0 0 8px 0" }}>
-                                                        🔧 Troubleshooting:
-                                                    </p>
-                                                    <ul style={{ color: "#aaa", fontSize: "11px", margin: 0, paddingLeft: "20px" }}>
-                                                        <li>Cloudflare Worker code சரியா deploy ஆச்சா?</li>
-                                                        <li>Worker-ல CORS headers + range requests support இருக்கா?</li>
-                                                        <li>Google Drive file "Anyone with link" access இருக்கா?</li>
-                                                        <li>Worker URL console-ல direct-ஆ open பண்ணி பாருங்க</li>
-                                                    </ul>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        <video
-                                            ref={videoRef}
-                                            src={movieUrl}
-                                            controls
-                                            playsInline
-                                            crossOrigin="anonymous"
-                                            onPlay={() => {
-                                                if (joinedRef.current) {
-                                                    updatePlayState(true, videoRef.current?.currentTime);
-                                                }
-                                                setIsVideoLoading(false);
-                                            }}
-                                            onPause={() => {
-                                                if (joinedRef.current) {
-                                                    updatePlayState(false, videoRef.current?.currentTime);
-                                                }
-                                            }}
-                                            onTimeUpdate={(e) => setCurrentVideoTime(e.target.currentTime)}
-                                            onSeeked={handleSeek}
-                                            onError={handleVideoError}
-                                            onCanPlay={handleVideoCanPlay}
-                                            onLoadStart={() => {
-                                                console.log("[Watch Together] Video load started");
-                                                setIsVideoLoading(true);
-                                            }}
-                                            onLoadedMetadata={() => {
-                                                console.log("[Watch Together] Video metadata loaded");
-                                            }}
-                                            onLoadedData={() => {
-                                                console.log("[Watch Together] Video data loaded");
-                                            }}
-                                            style={{
-                                                width: "100%",
-                                                height: "100%",
-                                                backgroundColor: "#000",
-                                                display: videoError ? "none" : "block"
-                                            }}
-                                        />
-                                        {import.meta.env.DEV && !videoError && (
-                                            <div style={{
-                                                position: "absolute",
-                                                top: "10px",
-                                                right: "10px",
-                                                backgroundColor: "rgba(0,0,0,0.7)",
-                                                padding: "8px 12px",
-                                                borderRadius: "6px",
-                                                fontSize: "10px",
-                                                color: "#aaa",
-                                                fontFamily: "monospace",
-                                                maxWidth: "300px",
-                                                wordBreak: "break-all"
-                                            }}>
-                                                <div>Worker: {workerStatus}</div>
-                                                <div>Retries: {videoRetryCount}</div>
-                                                <div>URL: {movieUrl.substring(0, 50)}...</div>
-                                            </div>
-                                        )}
                                     </div>
                                 ) : hasMovieUrl ? (
                                     <video
@@ -1800,20 +1523,11 @@ function Room() {
                                         onTimeUpdate={(e) => setCurrentVideoTime(e.target.currentTime)}
                                         onSeeked={handleSeek}
                                         onError={(e) => {
-                                            if (!movieUrl) return;
-                                            if (!videoRetryRef.current) {
-                                                videoRetryRef.current = true;
-                                                const retryUrl = `${movieUrl}${movieUrl.includes("?") ? "&" : "?"}retry=${Date.now()}`;
-                                                if (videoRef.current) {
-                                                    videoRef.current.src = retryUrl;
-                                                    videoRef.current.load();
-                                                }
-                                                showToast("Video load retry பண்ணுறோம்... ⏳", "⚠️", "#f39c12");
-                                                return;
-                                            }
                                             const mediaErr = e?.currentTarget?.error;
-                                            const mediaCode = mediaErr?.code ? ` (code ${mediaErr.code})` : "";
-                                            showToast(`Video load ஆகல${mediaCode}. URL temporary unavailable (503) இருக்கலாம். மீண்டும் try பண்ணு.`, "❌", "#e74c3c");
+                                            const code = mediaErr?.code;
+                                            if (code === 2) showToast("Network error — internet connection check பண்ணு.", "❌", "#e74c3c");
+                                            else if (code === 4) showToast("Video format supported இல்ல. YouTube Unlisted link use பண்ணு.", "❌", "#e74c3c");
+                                            else showToast("Video load ஆகல. URL check பண்ணு.", "❌", "#e74c3c");
                                         }}
                                     />
                                 ) : (
