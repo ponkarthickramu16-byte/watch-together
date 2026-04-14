@@ -133,11 +133,10 @@ function Home({ user }) {
 
         if (!uid && !fallbackName) { setHistoryLoading(false); return; }
 
-        // FIX: Don't query Firestore until auth state is resolved.
-        // Querying before auth resolves → Firebase permission denied error.
-        // This is handled at the top-level with onAuthStateChanged (line ~170).
-        if (!authChecked) { setHistoryLoading(false); return; }
-        if (!user) { setHistoryLoading(false); return; }
+        // FIX: Wait for auth to be checked AND user to be authenticated.
+        // authChecked = true just means auth state resolved (could be logged out).
+        // Only query if auth.currentUser exists (user is actually authenticated).
+        if (!authChecked || !auth.currentUser) { setHistoryLoading(false); return; }
 
         setHistoryError("");
         setHistoryLoading(true);
