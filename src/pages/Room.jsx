@@ -1374,8 +1374,9 @@ function Room() {
     const movieUrl = roomData?.movieUrl || "";
     const movieType = roomData?.movieType || getMovieType(roomData, movieUrl);
     const youtubeId = getYouTubeId(movieUrl);
+    const driveFileId = getDriveFileId(movieUrl);
     const isYouTubeVideo = movieType === "youtube" || !!youtubeId;
-    // isDriveVideo removed — Drive URLs now handled by the generic <video> fallback like any direct URL.
+    const isDriveVideo = movieType === "drive" || (!!driveFileId && movieUrl.includes("drive.google.com"));
     const hasMovieUrl = !!movieUrl;
 
     return (
@@ -1510,6 +1511,14 @@ function Room() {
                                             </button>
                                         </div>
                                     </div>
+                                ) : isDriveVideo && driveFileId ? (
+                                    <iframe
+                                        src={movieUrl}
+                                        style={{ width: "100%", height: "100%", border: "none" }}
+                                        allow="autoplay"
+                                        allowFullScreen
+                                        onError={(e) => showToast("❌ Drive video load ஆகல. Link share பண்ணி 'Anyone' select பண்ணி try பண்ணு", "⚠️", "#e74c3c")}
+                                    />
                                 ) : hasMovieUrl ? (
                                     <video
                                         ref={videoRef}
