@@ -42,15 +42,13 @@ const getDriveFileId = (url) => {
     return null;
 };
 
-// ─── Cloudflare Worker proxy URL ─────────────────────────────────────────────
-const DRIVE_PROXY = "https://drive-proxy.ponkarthickramu16.workers.dev";
-
-// ─── Drive link → proxy video URL convert ────────────────────────────────────
-// இந்த URL-ஐ <video src> -ல போட்டா full sync work ஆகும்!
+// ─── Drive link → Direct playback URL ────────────────────────────────────────
+// Use Google Drive's direct download URL for video playback (no proxy needed)
 export const getDriveEmbedUrl = (url) => {
     const fileId = getDriveFileId(url);
     if (!fileId) return null;
-    return `${DRIVE_PROXY}?id=${fileId}`;
+    // Direct playback URL - works for videos in Google Drive
+    return `https://drive.google.com/uc?export=download&id=${fileId}`;
 };
 
 // ─── Detect link type ─────────────────────────────────────────────────────────

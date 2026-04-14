@@ -67,8 +67,7 @@ const getDriveFileId = (url) => {
         /drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/,
         /drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/,
         /drive\.google\.com\/uc\?.*id=([a-zA-Z0-9_-]+)/,
-        // Proxy URL detect: https://drive-proxy.xxx.workers.dev?id=FILE_ID
-        /workers\.dev\?id=([a-zA-Z0-9_-]+)/,
+        /docs\.google\.com\/.*\/d\/([a-zA-Z0-9_-]+)/,
     ];
     for (const pattern of patterns) {
         const match = trimmed.match(pattern);
