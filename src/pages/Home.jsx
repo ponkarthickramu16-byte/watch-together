@@ -128,15 +128,21 @@ function Home({ user }) {
 
     // Watch history
     useEffect(() => {
+        // FIX: Check authentication FIRST before building any queries.
+        // authChecked = true means auth state resolved (could be logged out).
+        // Only proceed if user is actually authenticated via Firebase.
+        if (!authChecked || !auth.currentUser) {
+            setHistoryLoading(false);
+            return;
+        }
+
         const uid = user?.uid || null;
         const fallbackName = profile?.name || user?.displayName || user?.email || null;
 
-        if (!uid && !fallbackName) { setHistoryLoading(false); return; }
-
-        // FIX: Wait for auth to be checked AND user to be authenticated.
-        // authChecked = true just means auth state resolved (could be logged out).
-        // Only query if auth.currentUser exists (user is actually authenticated).
-        if (!authChecked || !auth.currentUser) { setHistoryLoading(false); return; }
+        if (!uid && !fallbackName) {
+            setHistoryLoading(false);
+            return;
+        }
 
         setHistoryError("");
         setHistoryLoading(true);
