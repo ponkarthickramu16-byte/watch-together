@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { db, auth } from "../firebase";
 import { collection, addDoc, query, where, onSnapshot, orderBy, doc, getDoc, setDoc } from "firebase/firestore";
 import ProfileSetup from "./ProfileSetup";
-import { signOut } from "firebase/auth";
+import { signOut, onAuthStateChanged } from "firebase/auth";
 import AdvancedSearch from "../components/AdvancedSearch";
 
 const generateRoomId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -98,11 +98,20 @@ function Home({ user }) {
     const [profileLoading, setProfileLoading] = useState(true);
     const [showProfileSetup, setShowProfileSetup] = useState(false);
     const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
+    const [authChecked, setAuthChecked] = useState(false);
 
     // Link preview state — paste பண்ணும்போது type காட்டும்
     const [linkPreview, setLinkPreview] = useState(null); // "youtube" | "drive" | "direct" | null
 
     const creatingRef = useRef(false);
+
+    // Check auth state on mount
+    useEffect(() => {
+        const unsub = onAuthStateChanged(auth, () => {
+            setAuthChecked(true);
+        });
+        return () => unsub();
+    }, []);
 
     // Load profile
     useEffect(() => {
@@ -123,6 +132,12 @@ function Home({ user }) {
         const fallbackName = profile?.name || user?.displayName || user?.email || null;
 
         if (!uid && !fallbackName) { setHistoryLoading(false); return; }
+
+        // FIX: Don't query Firestore until auth state is resolved.
+        // Querying before auth resolves → Firebase permission denied error.
+        // This is handled at the top-level with onAuthStateChanged (line ~170).
+        if (!authChecked) { setHistoryLoading(false); return; }
+        if (!user) { setHistoryLoading(false); return; }
 
         setHistoryError("");
         setHistoryLoading(true);
@@ -196,7 +211,7 @@ function Home({ user }) {
         }
 
         return () => unsubs.forEach(u => u());
-    }, [user?.uid, user?.displayName, user?.email, profile?.name]);
+    }, [user?.uid, user?.displayName, user?.email, profile?.name, authChecked]);
 
     // ─── Create Room ────────────────────────────────────────────────────────────
     const createRoom = async (inputUrl = "", inputType = "") => {
@@ -231,7 +246,7 @@ function Home({ user }) {
         try {
             const roomId = generateRoomId();
             const isYouTube = finalType === "youtube";
-            const isDrive   = finalType === "drive";
+            const isDrive = finalType === "drive";
 
             const newRoom = {
                 roomId,
@@ -587,10 +602,10 @@ function Home({ user }) {
                             </div>
 
                             {items.map((item) => {
-                                const ytId    = getYouTubeId(item.movieUrl || "");
+                                const ytId = getYouTubeId(item.movieUrl || "");
                                 const driveId = getDriveFileId(item.movieUrl || "");
-                                const title   = getMovieTitle(item);
-                                const isYT    = item.movieType === "youtube" || !!ytId;
+                                const title = getMovieTitle(item);
+                                const isYT = item.movieType === "youtube" || !!ytId;
                                 const isDrive = item.movieType === "drive" || !!driveId;
                                 const isCoupleRoom = item.roomType === "couple" || !item.roomType;
 
