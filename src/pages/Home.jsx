@@ -168,8 +168,17 @@ function Home({ user }) {
         // listener that is never cleaned up. Instead, run them in parallel and
         // merge results, deduplicating by document ID.
         const latestByKey = new Map(); // id → data
+
+        // Fix: When uid is available, ONLY run the uid-based query.
+        // Running both uid + name queries simultaneously causes permission-denied
+        // because UID-owned docs satisfy watchedByUid == auth.uid rule, NOT the
+        // watchedByUid == null && watchedBy == name branch. The name query then
+        // fails on those documents → "Missing or insufficient permissions" error.
+        // name-based query is only needed for legacy docs (watchedByUid == null).
+        const shouldRunNameQuery = !uid && !!fallbackName;
+
         let uidDone = !uid;
-        let nameDone = !fallbackName;
+        let nameDone = !shouldRunNameQuery;
 
         const merge = () => {
             if (!uidDone || !nameDone) return; // wait for both to resolve
@@ -199,7 +208,8 @@ function Home({ user }) {
             unsubs.push(unsubUid);
         }
 
-        if (fallbackName) {
+        // Only run name query for legacy (pre-uid) data when no uid is available
+        if (shouldRunNameQuery) {
             const qName = query(
                 collection(db, "watchHistory"),
                 where("watchedBy", "==", fallbackName),

@@ -314,7 +314,12 @@ function WatchHistoryModal({ roomId, onClose, T, authUser, authChecked }) {
             setLoading(false);
             return;
         }
-        const q = query(collection(db, "watchHistory"), where("roomId", "==", roomId), orderBy("watchedAt", "desc"));
+        const q = query(
+            collection(db, "watchHistory"),
+            where("watchedByUid", "==", authUser.uid),
+            where("roomId", "==", roomId),
+            orderBy("watchedAt", "desc")
+        );
         return onSnapshot(q,
             (snap) => { setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); },
             (err) => {
