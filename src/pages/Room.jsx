@@ -1517,14 +1517,24 @@ function Room() {
                                         </div>
                                     </div>
                                 ) : isDriveVideo && driveFileId ? (
-                                    <iframe
-                                        ref={iframeRef}
-                                        src={`https://drive.google.com/file/d/${driveFileId}/preview`}
-                                        style={{ width: "100%", height: "100%", border: "none" }}
-                                        allow="autoplay; fullscreen"
-                                        allowFullScreen
-                                        onLoad={() => console.log("[Watch Together] Drive iframe loaded successfully")}
-                                        onError={() => showToast("❌ Drive video load ஆகல. File-ஐ 'Anyone with link' share பண்ணி try பண்ணு", "⚠️", "#e74c3c")}
+                                    // Google Drive iframe embed is blocked by Google's CSP (frame-ancestors policy).
+                                    // Solution: use direct stream URL in a <video> tag — supports sync, seek, play/pause.
+                                    <video
+                                        ref={videoRef}
+                                        src={`https://drive.google.com/uc?export=download&id=${driveFileId}`}
+                                        controls
+                                        playsInline
+                                        style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
+                                        onPlay={() => { if (joinedRef.current) updatePlayState(true, videoRef.current?.currentTime); }}
+                                        onPause={() => { if (joinedRef.current) updatePlayState(false, videoRef.current?.currentTime); }}
+                                        onTimeUpdate={(e) => setCurrentVideoTime(e.target.currentTime)}
+                                        onSeeked={handleSeek}
+                                        onError={(e) => {
+                                            const code = e?.currentTarget?.error?.code;
+                                            if (code === 2) showToast("Network error — internet check பண்ணு.", "❌", "#e74c3c");
+                                            else showToast("❌ Drive video load ஆகல. File sharing-ஐ 'Anyone with the link' ஆக மாத்து.", "⚠️", "#e74c3c");
+                                        }}
+                                        onLoadedData={() => showToast("✅ Drive video ready!", "🎬", "#27ae60")}
                                     />
                                 ) : hasMovieUrl ? (
                                     <video
