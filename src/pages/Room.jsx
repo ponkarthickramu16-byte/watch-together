@@ -1519,7 +1519,7 @@ function Room() {
                                 ) : isDriveVideo && driveFileId ? (
                                     <video
                                         ref={videoRef}
-                                        src={`https://drive.google.com/uc?export=download&id=${driveFileId}`}
+                                        src={`/api/drive-proxy?id=${driveFileId}`}
                                         controls
                                         playsInline
                                         style={{ width: "100%", height: "100%", backgroundColor: "#000" }}
