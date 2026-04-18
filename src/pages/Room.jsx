@@ -362,12 +362,12 @@ function WatchHistoryModal({ roomId, onClose, T, authUser, authChecked }) {
                     {!loading && !errType && history.length === 0 && <p style={{ color: T.text3, textAlign: "center", padding: "20px" }}>இன்னும் எந்த movie-உம் பார்க்கல 🍿</p>}
                     {history.map(h => (
                         <div key={h.id} style={{ backgroundColor: T.card2, borderRadius: "10px", padding: "12px 16px", marginBottom: "8px", display: "flex", alignItems: "center", gap: "12px" }}>
-                            <span style={{ fontSize: "28px" }}>{h.movieType === "youtube" ? "▶️" : "🎞️"}</span>
+                            <span style={{ fontSize: "28px" }}>{h.movieType === "youtube" ? "▶️" : h.movieType === "drive" ? "📁" : "🎞️"}</span>
                             <div style={{ flex: 1, minWidth: 0 }}>
                                 <p style={{ color: T.text, fontSize: "14px", fontWeight: "bold", margin: "0 0 4px 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.movieTitle || h.movieUrl?.substring(0, 40) || "Movie"}</p>
                                 <p style={{ color: T.text3, fontSize: "12px", margin: 0 }}>{h.watchedBy} • {h.watchedAt?.toDate ? new Date(h.watchedAt.toDate()).toLocaleDateString("ta-IN") : ""}</p>
                             </div>
-                            <span style={{ color: h.movieType === "youtube" ? "#e74c3c" : "#3498db", fontSize: "11px", fontWeight: "bold", backgroundColor: T.card, padding: "2px 8px", borderRadius: "10px" }}>{h.movieType === "youtube" ? "YouTube" : "Upload"}</span>
+                            <span style={{ color: h.movieType === "youtube" ? "#e74c3c" : h.movieType === "drive" ? "#27ae60" : "#3498db", fontSize: "11px", fontWeight: "bold", backgroundColor: T.card, padding: "2px 8px", borderRadius: "10px" }}>{h.movieType === "youtube" ? "YouTube" : h.movieType === "drive" ? "Drive" : "Upload"}</span>
                         </div>
                     ))}
                 </div>
@@ -1078,8 +1078,8 @@ function Room() {
             const authName = authU?.displayName || authU?.email || null;
             await addDoc(collection(db, "watchHistory"), {
                 roomId, movieUrl,
-                movieType: data?.movieType || (youtubeId ? "youtube" : "upload"),
-                movieTitle: youtubeId ? `YouTube: ${youtubeId}` : movieUrl.split("/").pop() || "Movie",
+                movieType: data?.movieType || (youtubeId ? "youtube" : getDriveFileId(movieUrl) ? "drive" : "upload"),
+                movieTitle: youtubeId ? `YouTube: ${youtubeId}` : getDriveFileId(movieUrl) ? `Drive: ${movieUrl.split("/d/")[1]?.split("/")[0]?.substring(0, 20) || "Video"}` : movieUrl.split("/").pop() || "Movie",
                 watchedBy: authName || user,
                 watchedByName: user,
                 watchedByUid: uid,
@@ -1518,11 +1518,13 @@ function Room() {
                                     </div>
                                 ) : isDriveVideo && driveFileId ? (
                                     <iframe
-                                        src={movieUrl}
+                                        ref={iframeRef}
+                                        src={`https://drive.google.com/file/d/${driveFileId}/preview`}
                                         style={{ width: "100%", height: "100%", border: "none" }}
-                                        allow="autoplay"
+                                        allow="autoplay; fullscreen"
                                         allowFullScreen
-                                        onError={(e) => showToast("❌ Drive video load ஆகல. Link share பண்ணி 'Anyone' select பண்ணி try பண்ணு", "⚠️", "#e74c3c")}
+                                        onLoad={() => console.log("[Watch Together] Drive iframe loaded successfully")}
+                                        onError={() => showToast("❌ Drive video load ஆகல. File-ஐ 'Anyone with link' share பண்ணி try பண்ணு", "⚠️", "#e74c3c")}
                                     />
                                 ) : hasMovieUrl ? (
                                     <video
